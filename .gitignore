@@ -1,0 +1,8 @@
+/Cargo.lock
+/anchors.txt
+/target
+/assets/videos
+/obj
+src/video_ndk.rs
+/libs
+
