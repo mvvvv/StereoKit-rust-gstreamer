@@ -1,0 +1,172 @@
+import org.apache.tools.ant.taskdefs.condition.Os
+plugins {
+    id 'org.mozilla.rust-android-gradle.rust-android'
+}
+
+// Do we have to provide our own libopenxr_loader.so ?
+def openxr = project.getProperties().getOrDefault("cargo.openxr","<NONE>")
+def libDirs = []
+if (openxr.contains("build-dynamic-openxr")) { 
+    //if you need the loader we will build (see features of stereokit-rust)
+    println 'OpenXR built' 
+    libDirs=['../target/runtime_libs']            
+} else if (openxr.contains("<NONE>")) {
+    //if you'll use the loader provided by the headset           
+    println 'No OpenXR loader in this Apk' 
+} else {
+    //if you need your own prebuilt loader (see features of stereokit-rust)
+    println 'OpenXR loader from ' + openxr
+    libDirs=[openxr] 
+}
+
+// android plugin https://developer.android.com/build?hl=fr
+apply plugin: 'com.android.application'
+android {
+    namespace findProperty("android.applicationId") 
+    compileSdk 33
+    ndkVersion findProperty("android.ndkVersion") 
+
+    compileSdkVersion rootProject.findProperty("android.compileSdkVersion") as Integer
+    defaultConfig {
+        targetSdkVersion findProperty("android.targetSdkVersion") as Integer
+        minSdkVersion findProperty("android.minSdkVersion") as Integer
+        applicationId findProperty("android.applicationId")
+        versionCode findProperty("android.minSdkVersion") as Integer
+        versionName findProperty("android.versionName")
+        def libname = findProperty("cargo.libname")
+        def appname = findProperty("android.appname")
+        setProperty("archivesBaseName", libname)
+        manifestPlaceholders = [appName: appname, libName: libname]
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+    
+    sourceSets { main { java {
+            jniLibs.srcDirs=libDirs + ['../libs']
+            exclude '../libs/libNativeApplication.so'
+            exclude 'libstereokit_rust_gstreamer.so'
+            assets.srcDirs = ['../assets']
+            res.srcDirs = ['../res']
+    }}}
+
+    signingConfigs {
+        release {
+            storeFile file(RELEASE_STORE_FILE)
+            storePassword RELEASE_STORE_PASSWORD
+            keyAlias RELEASE_KEY_ALIAS
+            keyPassword RELEASE_KEY_PASSWORD
+            v1SigningEnabled true
+            v2SigningEnabled true
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled true
+            signingConfig signingConfigs.release
+        }
+        
+        debug {
+            minifyEnabled false
+            debuggable true
+        }
+    }
+
+
+    // buildFeatures {
+    //     prefab true
+    // }
+
+}
+
+// cargo-ndk plugin https://github.com/mozilla/rust-android-gradle
+apply plugin: 'org.mozilla.rust-android-gradle.rust-android'
+cargo {
+    module  = ".."                          // where is your Cargo.toml
+    libname = findProperty("cargo.libname") // Cargo.toml's [package] name.
+    targets = ["arm64"]                     // the only one that VR requires
+    prebuiltToolchains = true
+    //apiLevel = 21
+    //verbose = true
+
+    // release or debug ?
+    if (project.gradle.startParameter.taskNames.contains('buildRelease')||
+        project.gradle.startParameter.taskNames.contains('assembleRelease') ||
+        project.gradle.startParameter.taskNames.contains('installRelease') ){
+        profile = "release"
+        println "Ready for a release build!!"
+    } else {
+        profile = "debug"
+        println "Ready for a debug build !!"
+    }
+
+
+}
+
+tasks.whenTaskAdded { task ->
+    if (task.name == 'mergeDebugJniLibFolders' || task.name == 'mergeReleaseJniLibFolders') {
+        task.dependsOn 'cargoBuild'
+    }
+
+    for (target in cargo.targets) {
+        if (task.name == "cargoBuild${target.capitalize()}") {
+            task.dependsOn "copy_libc++_shared${target.capitalize()}"
+        }
+    }
+}
+
+for (target in cargo.targets) {
+      tasks.register("copy_libc++_shared${target.capitalize()}", Copy) {
+        def ndkDir = findProperty('android.ndksDirectory') + android.ndkVersion
+        // hostTag, abi and archTriple from: https://developer.android.com/ndk/guides/other_build_systems
+
+        def hostTag
+        if (Os.isFamily(Os.FAMILY_WINDOWS)) {
+            if (Os.isArch("x86_64") || Os.isArch("amd64")) {
+                hostTag = "windows-x86_64"
+            } else {
+                hostTag = "windows"
+            }
+        } else if (Os.isFamily(Os.FAMILY_MAC)) {
+            hostTag = "darwin-x86_64"
+        } else {
+            hostTag = "linux-x86_64"
+        }
+
+        def (abi, archTriple) = [
+            arm: ['armeabi-v7a', 'arm-linux-androideabi'],
+            arm64: ['arm64-v8a', 'aarch64-linux-android'],
+            x86: ['x86', 'i686-linux-android'],
+            x86_64: ['x86_64', 'x86_64-linux-android'],
+        ][target]
+
+        def from_path = "$ndkDir/toolchains/llvm/prebuilt/$hostTag/sysroot/usr/lib/$archTriple/libc++_shared.so"
+        def into_path = layout.buildDirectory.dir("rustJniLibs/android/$abi")
+
+        assert file(from_path).exists()
+
+        from from_path
+        into into_path
+    }
+}
+
+afterEvaluate {
+    // The `cargoBuild` task isn't available until after evaluation.
+    android.applicationVariants.all { variant ->
+
+        def productFlavor = ""
+        variant.productFlavors.each {
+            productFlavor += "${it.name.capitalize()}"
+        }
+        def buildType = "${variant.buildType.name.capitalize()}"
+
+        for (target in cargo.targets) {
+            for (task in tasks.named("merge${productFlavor}${buildType}Assets")) {
+                task.configure {dependsOn(tasks.named("copy_libc++_shared${target.capitalize()}"))}
+            }
+        }
+    }
+}

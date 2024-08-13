@@ -19,7 +19,7 @@ use stereokit_rust::{
         Color128, Gradient,
     },
 };
-use video1::{Video1, VideoType};
+use video1::{gstreamer_init, Video1, VideoType};
 use winit::event_loop::EventLoop;
 
 /// Somewhere to copy the log
@@ -29,6 +29,21 @@ static LOG_LOG: Mutex<Vec<LogItem>> = Mutex::new(vec![]);
 #[cfg(target_os = "android")]
 //use android_activity::AndroidApp;
 use winit::platform::android::activity::AndroidApp;
+
+// #[cfg(target_os = "android")]
+// use jni::{
+//     sys::{jint, JNI_VERSION_1_8},
+//     JavaVM,
+// };
+// #[cfg(target_os = "android")]
+// use std::os::raw::c_void;
+// #[cfg(target_os = "android")]
+// #[allow(non_snake_case)]
+// #[no_mangle]
+// pub unsafe extern "system" fn JNI_OnLoad(vm: JavaVM, _: *mut c_void) -> jint {
+//     let env = vm.get_env().expect("Cannot get reference to the JNIEnv");
+//     JNI_VERSION_1_8
+// }
 
 #[allow(dead_code)]
 #[cfg(target_os = "android")]
@@ -70,7 +85,7 @@ pub fn launch(mut sk: Sk, event_loop: EventLoop<StepperAction>, _is_testing: boo
     let fn_mut = |level: LogLevel, log_text: &str| {
         let mut items = LOG_LOG.lock().unwrap();
         for line_text in log_text.lines() {
-            let subs = line_text.as_bytes().chunks(120);
+            let subs = line_text.as_bytes().chunks(130);
             for (pos, sub_line) in subs.enumerate() {
                 if let Ok(mut sub_string) = String::from_utf8(sub_line.to_vec()) {
                     if pos > 0 {
@@ -125,6 +140,10 @@ pub fn launch(mut sk: Sk, event_loop: EventLoop<StepperAction>, _is_testing: boo
     cube0.render_as_sky();
     let mut sky = 1;
 
+    //init gstreamer
+    if let Err(err) = gstreamer_init() {
+        Log::err(format!("Error during gstreamer initialisation : {:?}", err));
+    }
     Log::diag(
         "======================================================================================================== !!",
     );

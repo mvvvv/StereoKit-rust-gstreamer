@@ -39,7 +39,9 @@ fn main() {
 
                 Command::new("make")
                     .env("BUILD_SYSTEM", format!("{}/build/core", android_ndk_home))
-                    .env("GSTREAMER_ROOT", gst_libs_path.to_str().unwrap())
+                    .env("GSTREAMER_JAVA_SRC_DIR", "../../app/src/main/java")
+                    .env("GSTREAMER_ASSETS_DIR", "../../assets")
+                    .env("GSTREAMER_ROOT_ANDROID", gst_libs_path.to_str().unwrap())
                     .env(
                         "GSTREAMER_NDK_BUILD_PATH",
                         gst_libs_path.join("share/gst-android/ndk-build/").to_str().unwrap(),
@@ -48,7 +50,7 @@ fn main() {
                     .status()
                     .expect("failed to make!");
 
-                env::set_current_dir("../..").expect("Unable to get the right working directory");
+                //env::set_current_dir("../..").expect("Unable to get the right working directory");
 
                 println!("cargo:rustc-link-search=native={}/gst-android-build/arm64-v8a", gst_android_build_path);
                 cargo_link!("gstreamer_android");

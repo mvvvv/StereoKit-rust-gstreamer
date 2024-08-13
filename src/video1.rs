@@ -619,92 +619,6 @@ impl Video1 {
         let material_id = self.id.clone() + "material_video";
         video_tex.id(&tex_id).sample_mode(TexSample::Point);
         self.video_material.id(&material_id).diffuse_tex(&video_tex);
-        gstreamer::init()?;
-        gstreamer::log::set_default_threshold(gstreamer::DebugLevel::Warning);
-
-        #[cfg(target_os = "android")]
-        {
-            let ctx = ndk_context::android_context();
-            let vm = unsafe { jni::JavaVM::from_raw(ctx.vm() as _) }?;
-            //let activity = unsafe { jni::objects::JObject::from_raw(ctx.context() as _) };
-            let mut env = vm.attach_current_thread()?;
-
-            let media_codec_list = env.new_object("android/media/MediaCodecList", "(I)V", &[0i32.into()])?;
-
-            // let media_codecs: jni::objects::JObjectArray = env
-            //     .call_method(&media_codec_list, "getCodecInfos", "()[Landroid/media/MediaCodecInfo;", &[])?
-            //     .l()?
-            //     .into();
-            // Log::diag(format!("le truc : {:?}", media_codecs));
-
-            let omx_decode_list = vec!["video/avc", "video/hevc", "video/x-vnd.on2.vp8", "video/x-vnd.on2.vp9"];
-
-            for str in omx_decode_list {
-                let jstr = env.new_string(str)?;
-                let video_format = env.call_static_method(
-                    "android/media/MediaFormat",
-                    "createVideoFormat",
-                    "(Ljava/lang/String;II)Landroid/media/MediaFormat;",
-                    &[(&jstr).into(), 800i32.into(), 600i32.into()],
-                )?;
-
-                let media_codec: jni::objects::JString = env
-                    .call_method(
-                        &media_codec_list,
-                        "findDecoderForFormat",
-                        "(Landroid/media/MediaFormat;)Ljava/lang/String;",
-                        &[video_format.borrow()],
-                    )?
-                    .l()?
-                    .into();
-
-                // "OMX.qcom.video.decoder.avc",
-                // "OMX.qcom.video.decoder.vp8",
-                // "OMX.qcom.video.decoder.hevc",
-                match env.get_string(&media_codec) {
-                    Result::Ok(codec) => {
-                        let str_codec: String = codec.into();
-                        Log::diag(format!("Codec for {} -> {}", str, str_codec));
-                    }
-                    Err(err) => {
-                        Log::warn(format!("No codec for {} ->  {:?}", str, err));
-                    }
-                };
-            }
-
-            let omx_decode_list = vec![
-                "openh264",
-                "vp8dec",
-                "vp9dec",
-                "amcviddec-c2qtiavcdecoder",
-                "amcviddec-omxqcomvideodecoderh263",
-                "amcviddec-omxqcomvideodecoderavc",
-                "amcviddec-omxqcomvideodecoderhevc",
-                "amcviddec-omxqcomvideodecodermpeg2",
-                "amcviddec-omxqcomvideodecodermpeg4",
-                "amcviddec-omxqcomvideodecodervp8",
-                "amcviddec-omxqcomvideodecodervp9",
-            ];
-
-            let registry = gstreamer::Registry::get();
-
-            for plugin in registry.plugins() {
-                Log::diag(format!("plugin : {:?}", plugin.plugin_name()));
-
-                // for feat in registry.features_by_plugin(&plugin.plugin_name()) {
-                //Log::diag(format!("   feature : {:?}", feat));
-                // }
-            }
-
-            for element in omx_decode_list {
-                if let Some(feature) = registry.lookup_feature(element) {
-                    gstreamer::prelude::PluginFeatureExtManual::set_rank(&feature, gstreamer::Rank::PRIMARY);
-                    registry.add_feature(&feature)?;
-                } else {
-                    Log::warn(format!("Feature {} does not exist !", element));
-                }
-            }
-        }
 
         let pipeline = Pipeline::default();
         Ok((tex_id, pipeline))
@@ -888,4 +802,97 @@ impl Video1 {
             }
         }
     }
+}
+
+pub fn gstreamer_init() -> Result<(), anyhow::Error> {
+    gstreamer::log::set_default_threshold(gstreamer::DebugLevel::Info);
+    #[cfg(not(target_os = "android"))]
+    {
+        gstreamer::init()?;
+    }
+
+    #[cfg(target_os = "android")]
+    {
+        let ctx = ndk_context::android_context();
+        let vm = unsafe { jni::JavaVM::from_raw(ctx.vm() as _) }?;
+        //let activity = unsafe { jni::objects::JObject::from_raw(ctx.context() as _) };
+        let mut env = vm.attach_current_thread()?;
+
+        let media_codec_list = env.new_object("android/media/MediaCodecList", "(I)V", &[0i32.into()])?;
+
+        // let media_codecs: jni::objects::JObjectArray = env
+        //     .call_method(&media_codec_list, "getCodecInfos", "()[Landroid/media/MediaCodecInfo;", &[])?
+        //     .l()?
+        //     .into();
+        // Log::diag(format!("le truc : {:?}", media_codecs));
+
+        let omx_decode_list = vec!["video/avc", "video/hevc", "video/x-vnd.on2.vp8", "video/x-vnd.on2.vp9"];
+
+        for str in omx_decode_list {
+            let jstr = env.new_string(str)?;
+            let video_format = env.call_static_method(
+                "android/media/MediaFormat",
+                "createVideoFormat",
+                "(Ljava/lang/String;II)Landroid/media/MediaFormat;",
+                &[(&jstr).into(), 800i32.into(), 600i32.into()],
+            )?;
+
+            let media_codec: jni::objects::JString = env
+                .call_method(
+                    &media_codec_list,
+                    "findDecoderForFormat",
+                    "(Landroid/media/MediaFormat;)Ljava/lang/String;",
+                    &[video_format.borrow()],
+                )?
+                .l()?
+                .into();
+
+            // "OMX.qcom.video.decoder.avc",
+            // "OMX.qcom.video.decoder.vp8",
+            // "OMX.qcom.video.decoder.hevc",
+            match env.get_string(&media_codec) {
+                Result::Ok(codec) => {
+                    let str_codec: String = codec.into();
+                    Log::diag(format!("Codec for {} -> {}", str, str_codec));
+                }
+                Err(err) => {
+                    Log::warn(format!("No codec for {} ->  {:?}", str, err));
+                }
+            };
+        }
+
+        let omx_decode_list = vec![
+            "openh264",
+            "vp8dec",
+            "vp9dec",
+            "amcviddec-c2qtiavcdecoder",
+            "amcviddec-omxqcomvideodecoderh263",
+            "amcviddec-omxqcomvideodecoderavc",
+            "amcviddec-omxqcomvideodecoderhevc",
+            "amcviddec-omxqcomvideodecodermpeg2",
+            "amcviddec-omxqcomvideodecodermpeg4",
+            "amcviddec-omxqcomvideodecodervp8",
+            "amcviddec-omxqcomvideodecodervp9",
+        ];
+
+        let registry = gstreamer::Registry::get();
+
+        for plugin in registry.plugins() {
+            Log::diag(format!("plugin : {:?}", plugin.plugin_name()));
+
+            // for feat in registry.features_by_plugin(&plugin.plugin_name()) {
+            //Log::diag(format!("   feature : {:?}", feat));
+            // }
+        }
+
+        for element in omx_decode_list {
+            if let Some(feature) = registry.lookup_feature(element) {
+                gstreamer::prelude::PluginFeatureExtManual::set_rank(&feature, gstreamer::Rank::PRIMARY);
+                registry.add_feature(&feature)?;
+            } else {
+                Log::warn(format!("Feature {} does not exist !", element));
+            }
+        }
+    }
+    Ok(())
 }

@@ -31,15 +31,16 @@ If you're using VsCode you'll see two launchers in launch.json to debug the proj
 
 
 ## Run the project on your Android headset:
-* [Build GStreamer using cerbero](https://gstreamer.freedesktop.org/download/#sources) or [download GStreamer for android](https://gstreamer.freedesktop.org/download/#android). We only need the arm64 directory (Let's say we unzip it into "../gstreamer-1.24.5/".
+* [Build GStreamer using cerbero](https://gstreamer.freedesktop.org/download/#sources) or [download GStreamer for android](https://gstreamer.freedesktop.org/download/#android). We only need the arm64 directory (Let's say we unzip it into "../gstreamer-1.24.6/".
 
-* Launch: `GSTREAMER_PATH="../gstreamer-1.24.5/arm64" PKG_CONFIG_ALLOW_CROSS=1 cargo apk run`
+* On windows launch: `GSTREAMER_PATH="../gstreamer-1.24.6/arm64" PKG_CONFIG_ALLOW_CROSS=1  ./gradlew run && cmd /c logcat.cmd`
+* On others launch: `GSTREAMER_PATH="../gstreamer-1.24.6/arm64" PKG_CONFIG_ALLOW_CROSS=1  ./gradlew run && sh logcat.cmd`
 
 ## Build the release versions of your project:
 * Desktop : `cargo build --release`
-* Android : `GSTREAMER_PATH="../gstreamer-1.24.5/arm64"  PKG_CONFIG_ALLOW_CROSS=1 cargo apk build --release`
+* Android : `GSTREAMER_PATH="../gstreamer-1.24.5/arm64"  PKG_CONFIG_ALLOW_CROSS=1  ./gradlew buildRelease`
 
-Binaries and APK archives are produced under ./target/release
+Binaries are produced under ./target/release. Apk's are under./app/build/outputs/apk/release
 
 ## Compile shaders
 If you want to create your own shaders, you'll need the binary `compile_sks` of the stereokit-rust project and so you have to 'install' the project: 
