@@ -19,6 +19,13 @@ if (openxr.contains("build-dynamic-openxr")) {
     libDirs=[openxr] 
 }
 
+def abis = [
+            arm: ['armeabi-v7a', 'arm-linux-androideabi'],
+            arm64: ['arm64-v8a', 'aarch64-linux-android'],
+            x86: ['x86', 'i686-linux-android'],
+            x86_64: ['x86_64', 'x86_64-linux-android'],
+        ]
+
 // android plugin https://developer.android.com/build?hl=fr
 apply plugin: 'com.android.application'
 android {
@@ -44,13 +51,17 @@ android {
         targetCompatibility JavaVersion.VERSION_1_8
     }
     
-    sourceSets { main { java {
-            jniLibs.srcDirs=libDirs + ['../libs']
-            exclude '../libs/libNativeApplication.so'
-            exclude 'libstereokit_rust_gstreamer.so'
-            assets.srcDirs = ['../assets']
-            res.srcDirs = ['../res']
-    }}}
+    sourceSets { 
+        main { 
+            java {
+                assets.srcDirs = ['../assets']
+                res.srcDirs = ['../res']
+            }
+            jniLibs {
+                srcDirs += libDirs
+            }
+        }
+    }
 
     signingConfigs {
         release {
@@ -123,7 +134,19 @@ tasks.whenTaskAdded { task ->
 }
 
 for (target in cargo.targets) {
-      tasks.register("copy_libc++_shared${target.capitalize()}", Copy) {
+
+    tasks.register("copy_libgstreamer${target.capitalize()}", Copy) {
+        def (abi, archTriple) = abis[target]
+        def from_path = "../libs/$abi/libgstreamer_android.so"
+        def into_path = layout.buildDirectory.dir("rustJniLibs/android/$abi")
+        
+        assert file(from_path).exists()
+        dependsOn "cargoBuild${target.capitalize()}"
+        from from_path
+        into into_path
+    }
+
+    tasks.register("copy_libc++_shared${target.capitalize()}", Copy) {
         def ndkDir = findProperty('android.ndksDirectory') + android.ndkVersion
         // hostTag, abi and archTriple from: https://developer.android.com/ndk/guides/other_build_systems
 
@@ -140,12 +163,7 @@ for (target in cargo.targets) {
             hostTag = "linux-x86_64"
         }
 
-        def (abi, archTriple) = [
-            arm: ['armeabi-v7a', 'arm-linux-androideabi'],
-            arm64: ['arm64-v8a', 'aarch64-linux-android'],
-            x86: ['x86', 'i686-linux-android'],
-            x86_64: ['x86_64', 'x86_64-linux-android'],
-        ][target]
+        def (abi, archTriple) = abis[target]
 
         def from_path = "$ndkDir/toolchains/llvm/prebuilt/$hostTag/sysroot/usr/lib/$archTriple/libc++_shared.so"
         def into_path = layout.buildDirectory.dir("rustJniLibs/android/$abi")
@@ -168,8 +186,23 @@ afterEvaluate {
         def buildType = "${variant.buildType.name.capitalize()}"
 
         for (target in cargo.targets) {
+            for (task in tasks.named("compile${productFlavor}${buildType}JavaWithJavac")) {
+                task.configure {
+                    dependsOn(tasks.named("copy_libc++_shared${target.capitalize()}"))
+                    dependsOn(tasks.named("copy_libgstreamer${target.capitalize()}"))
+                    }
+            }
+            for (task in tasks.named("merge${productFlavor}${buildType}JniLibFolders")) {
+                task.configure {
+                    dependsOn(tasks.named("copy_libc++_shared${target.capitalize()}"))
+                    dependsOn(tasks.named("copy_libgstreamer${target.capitalize()}"))
+                    }
+            }
             for (task in tasks.named("merge${productFlavor}${buildType}Assets")) {
-                task.configure {dependsOn(tasks.named("copy_libc++_shared${target.capitalize()}"))}
+                task.configure {
+                    dependsOn(tasks.named("copy_libc++_shared${target.capitalize()}"))
+                    dependsOn(tasks.named("copy_libgstreamer${target.capitalize()}"))
+                    }
             }
         }
     }
