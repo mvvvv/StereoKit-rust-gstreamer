@@ -107,6 +107,10 @@ cargo {
 }
 
 tasks.whenTaskAdded { task ->
+    if (task.name == 'compileDebugJavaWithJavac' || task.name == 'compileReleaseJavaWithJavac') {
+        task.dependsOn 'cargoBuild'
+    }
+
     if (task.name == 'mergeDebugJniLibFolders' || task.name == 'mergeReleaseJniLibFolders') {
         task.dependsOn 'cargoBuild'
     }

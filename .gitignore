@@ -5,7 +5,9 @@
 /obj
 src/video_ndk.rs
 /libs
-
+app/src/main/java/org/freedesktop/gstreamer
+assets/fontconfig
+assets/ssl
 
 # Ignore Gradle project-specific cache directory
 .gradle
