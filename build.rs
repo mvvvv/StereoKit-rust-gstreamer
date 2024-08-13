@@ -31,11 +31,10 @@ fn main() {
                 let gst_libs_path = current_dir().unwrap().join(&gst_libs);
 
                 //make creates a lot of dirs so we move to target/android_build/
-                let gst_android_build_path = "target/gst_android_build";
+                let gst_android_build_path = "target/gst-android-build";
                 if let Err(_e) = std::fs::create_dir("target") {};
                 if let Err(_e) = std::fs::create_dir(gst_android_build_path) {};
-                env::set_current_dir(gst_android_build_path)
-                    .expect("Unable to get a build directory for android gstreamer");
+                env::set_current_dir("target").expect("Unable to get a build directory for android gstreamer");
 
                 Command::new("make")
                     .env("BUILD_SYSTEM", format!("{}/build/core", android_ndk_home))
@@ -50,9 +49,9 @@ fn main() {
                     .status()
                     .expect("failed to make!");
 
-                //env::set_current_dir("../..").expect("Unable to get the right working directory");
+                env::set_current_dir("../..").expect("Unable to get the right working directory");
 
-                println!("cargo:rustc-link-search=native={}/gst-android-build/arm64-v8a", gst_android_build_path);
+                println!("cargo:rustc-link-search=native={}/arm64-v8a", gst_android_build_path);
                 cargo_link!("gstreamer_android");
                 cargo_link!("dylib=c++");
 
