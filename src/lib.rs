@@ -117,8 +117,13 @@ pub fn launch(mut sk: Sk, event_loop: EventLoop<StepperAction>, _is_testing: boo
     sk.push_action(StepperAction::add_default::<FlyOver>("FlyOver"));
     // Open or close the log window
     let event_loop_proxy = sk.get_event_loop_proxy().unwrap();
-    let send_event_show_log = move || {
-        let _ = &event_loop_proxy.send_event(StepperAction::event("main".to_string(), "ShowLogWindow", "1"));
+    let mut send_event_show_log = move || {
+        show_log = !show_log;
+        let _ = &event_loop_proxy.send_event(StepperAction::event(
+            "main".to_string(),
+            "ShowLogWindow",
+            &show_log.to_string(),
+        ));
     };
 
     // we will have a window to trigger some actions
@@ -244,7 +249,7 @@ pub fn launch(mut sk: Sk, event_loop: EventLoop<StepperAction>, _is_testing: boo
             if let Some(new_value) = Ui::toggle("Video VP8", video_mkv_vp8_active, None) {
                 if new_value {
                     let uri_fmt = if let Some(dir_path) = get_external_path(sk.get_sk_info_clone()) {
-                        let file_path = dir_path.join("videos/sintel_trailer-480p.mkv");
+                        let file_path = dir_path.join("videos/sintel_trailer-480p.webm");
                         if file_path.is_file() {
                             Log::diag(format!("File VP8 : {:?}", file_path));
                             file_path.to_str().unwrap().into()

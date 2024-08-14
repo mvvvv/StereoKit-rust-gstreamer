@@ -34,7 +34,7 @@ task launchDebug(type: Exec) {
     dependsOn ":app:installDebug"
     def packageS = findProperty("android.applicationId")
     def main = findProperty("android.main")
-    def runCommand = ['adb', '-d', 'shell', 'am', 'start', '-a', 'android.intent.action.MAIN', '-n', packageS + main]
+    def runCommand = ['adb', '-d', 'shell', 'am', 'start', '-a', 'android.intent.action.MAIN', '-n', packageS + "/" + main]
     commandLine runCommand
 }
 

@@ -28,7 +28,7 @@
         <activity
             android:configChanges="density|keyboard|keyboardHidden|navigation|orientation|screenLayout|screenSize|uiMode"
             android:launchMode="singleTask" 
-            android:name="com.stereokit.rust_binding.stereokit_gst.MainActivity" 
+            android:name="${mainEntry}" 
             android:exported = "true"
             android:screenOrientation="landscape" android:resizeableActivity="false">
             <meta-data android:name="com.oculus.vr.focusaware" android:value="true" />

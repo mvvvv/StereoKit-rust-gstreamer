@@ -42,8 +42,9 @@ android {
         versionName findProperty("android.versionName")
         def libname = findProperty("cargo.libname")
         def appname = findProperty("android.appname")
+        def main = findProperty("android.main")
         setProperty("archivesBaseName", libname)
-        manifestPlaceholders = [appName: appname, libName: libname]
+        manifestPlaceholders = [appName: appname, libName: libname, mainEntry: main]
     }
 
     compileOptions {

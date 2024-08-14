@@ -21,6 +21,7 @@ gstreamer-sys = {version = "0.23"}
 gstreamer-app = {version = "0.23"}
 gstreamer-audio = {version = "0.23"}
 gstreamer-video = {version = "0.23"}
+gstreamer-gl =  {version = "0.23"}
 byte-slice-cast = "1"
 
 [target.'cfg(target_os = "android")'.dependencies]
