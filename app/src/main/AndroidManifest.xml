@@ -8,6 +8,7 @@
     <uses-feature android:name="com.oculus.software.body_tracking" android:required="false" />
     <uses-feature android:name="com.oculus.experimental.enabled" android:required="false" />
     <uses-feature android:name="com.oculus.feature.PASSTHROUGH" android:required="true" />
+    <uses-feature android:name="com.oculus.feature.RENDER_MODEL" android:required="true" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
