@@ -53,7 +53,7 @@ fn android_main(app: AndroidApp) {
     use stereokit_rust::sk::{DepthMode, OriginMode, SkSettings};
     let mut settings = SkSettings::default();
     settings
-        .app_name("stereokit-rust")
+        .app_name("rust_gstreamer")
         .assets_folder("assets")
         .origin(OriginMode::Floor)
         .render_multisample(4)
@@ -61,7 +61,9 @@ fn android_main(app: AndroidApp) {
         .depth_mode(DepthMode::Stencil)
         .log_filter(LogLevel::Diagnostic);
 
-    android_logger::init_once(android_logger::Config::default().with_max_level(log::LevelFilter::Debug));
+    android_logger::init_once(
+        android_logger::Config::default().with_max_level(log::LevelFilter::Debug).with_tag("SKIT_rs_gst"),
+    );
 
     let (sk, event_loop) = settings.init_with_event_loop(app).unwrap();
 
@@ -72,6 +74,7 @@ pub fn _main(sk: Sk, event_loop: EventLoop<StepperAction>) {
     let is_testing = false;
     Log::diag("Launch my_vr_program");
     launch(sk, event_loop, is_testing);
+    Sk::shutdown();
 }
 
 pub fn launch(mut sk: Sk, event_loop: EventLoop<StepperAction>, _is_testing: bool) {

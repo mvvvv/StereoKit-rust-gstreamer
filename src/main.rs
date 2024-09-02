@@ -41,7 +41,7 @@ fn main() {
     }
     let mut settings = SkSettings::default();
     settings
-        .app_name("stereokit-rust")
+        .app_name("rust_gstreamer")
         .assets_folder("assets")
         .origin(OriginMode::Stage)
         .log_filter(LogLevel::Diagnostic)
