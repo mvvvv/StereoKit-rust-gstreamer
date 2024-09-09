@@ -18,7 +18,7 @@ winit = { version = "0.30", features = [ "android-native-activity" ] }
 anyhow = {version = "1.0"}
 gstreamer = {version = "0.23"}
 gstreamer-sys = {version = "0.23"}
-gstreamer-app = {version = "0.23"}
+gstreamer-app = {version = "0.23", features = ["v1_24"]}
 gstreamer-audio = {version = "0.23"}
 gstreamer-video = {version = "0.23"}
 gstreamer-gl =  {version = "0.23"}

@@ -101,7 +101,7 @@ impl IStepper for Video1 {
 
         if let Err(error) = match &self.video_type {
             VideoType::RtpStream { port } => self.init_rtp_stream(*port),
-            VideoType::RtpRawStream { port } => self.init_rtp_raw_stream(*port),
+            //VideoType::RtpRawStream { port } => self.init_rtp_raw_stream(*port),
             VideoType::Decodebin { uri, v3_enabled } => self.init_decodebin(uri.clone(), *v3_enabled),
             VideoType::H264File { uri } => self.init_h264(uri.clone()),
             VideoType::VP8File { uri } => self.init_vp8(uri.clone()),
@@ -198,6 +198,7 @@ impl Video1 {
         let appsink_caps = if cfg!(target_os = "android") {
             &VideoCapsBuilder::new()
                 .features([gstreamer_gl::CAPS_FEATURE_MEMORY_GL_MEMORY])
+                .field("texture-target", "external-oes")
                 //.framerate((60, 1).into())
                 .format(VideoFormat::Rgba)
                 .width(self.width)
@@ -229,69 +230,69 @@ impl Video1 {
 
     /// init a video rtp stream
     ///
-    fn init_rtp_raw_stream(&mut self, port: i32) -> Result<(), anyhow::Error> {
-        let (tex_id, pipeline) = self.init_player()?;
+    // fn init_rtp_raw_stream(&mut self, port: i32) -> Result<(), anyhow::Error> {
+    //     let (tex_id, pipeline) = self.init_player()?;
 
-        let width = format!("{}", self.width);
-        let height = format!("{}", self.height);
+    //     let width = format!("{}", self.width);
+    //     let height = format!("{}", self.height);
 
-        let rtp_caps = gstreamer::Caps::builder("application/x-rtp")
-            .field("media", "video")
-            .field("clock-rate", 90000)
-            .field("encoding-name", "RAW")
-            .field("sampling", "YCbCr-4:2:0")
-            .field("format", "RGBA")
-            .field("depth", "8")
-            .field("width", width)
-            .field("height", height)
-            .field("colorimetry", "SMPTE240M")
-            .field("a-framerate", "60")
-            .field("payload", 96)
-            //.field("ssrc", 1103043224)
-            //.field("timestamp-offset", 1948293153)
-            //.field("seqnum-offset", 27904)
-            .build();
+    //     let rtp_caps = gstreamer::Caps::builder("application/x-rtp")
+    //         .field("media", "video")
+    //         .field("clock-rate", 90000)
+    //         .field("encoding-name", "RAW")
+    //         .field("sampling", "YCbCr-4:2:0")
+    //         .field("format", "RGBA")
+    //         .field("depth", "8")
+    //         .field("width", width)
+    //         .field("height", height)
+    //         .field("colorimetry", "SMPTE240M")
+    //         .field("a-framerate", "60")
+    //         .field("payload", 96)
+    //         //.field("ssrc", 1103043224)
+    //         //.field("timestamp-offset", 1948293153)
+    //         //.field("seqnum-offset", 27904)
+    //         .build();
 
-        let udpsrc = gstreamer::ElementFactory::make("udpsrc")
-            .property("port", port)
-            .property("caps", &rtp_caps)
-            .property("buffer-size", 200000)
-            .build()?;
-        let rtpvrawdepay = ElementFactory::make("rtpvrawdepay").build()?;
-        // let videoconvert = ElementFactory::make("videoconvert").build()?;
-        // let videoscale = ElementFactory::make("videoscale").build()?;
-        let videorate = ElementFactory::make("videorate").build()?;
-        let appsink_caps = if cfg!(target_os = "android") {
-            &VideoCapsBuilder::new()
-                .features([gstreamer_gl::CAPS_FEATURE_MEMORY_GL_MEMORY])
-                //.framerate((60, 1).into())
-                .format(VideoFormat::Rgba)
-                .width(self.width)
-                .height(self.height)
-                .build()
-        } else {
-            &VideoCapsBuilder::new()
-                //.framerate((60, 1).into())
-                .format(VideoFormat::Rgba)
-                .width(self.width)
-                .height(self.height)
-                .build()
-        };
-        let appsink = AppSink::builder().caps(appsink_caps).build();
+    //     let udpsrc = gstreamer::ElementFactory::make("udpsrc")
+    //         .property("port", port)
+    //         .property("caps", &rtp_caps)
+    //         .property("buffer-size", 200000)
+    //         .build()?;
+    //     let rtpvrawdepay = ElementFactory::make("rtpvrawdepay").build()?;
+    //     // let videoconvert = ElementFactory::make("videoconvert").build()?;
+    //     // let videoscale = ElementFactory::make("videoscale").build()?;
+    //     let videorate = ElementFactory::make("videorate").build()?;
+    //     let appsink_caps = if cfg!(target_os = "android") {
+    //         &VideoCapsBuilder::new()
+    //             .features([gstreamer_gl::CAPS_FEATURE_MEMORY_GL_MEMORY])
+    //             //.framerate((60, 1).into())
+    //             .format(VideoFormat::Rgba)
+    //             .width(self.width)
+    //             .height(self.height)
+    //             .build()
+    //     } else {
+    //         &VideoCapsBuilder::new()
+    //             //.framerate((60, 1).into())
+    //             .format(VideoFormat::Rgba)
+    //             .width(self.width)
+    //             .height(self.height)
+    //             .build()
+    //     };
+    //     let appsink = AppSink::builder().caps(appsink_caps).build();
 
-        let elements = &[&udpsrc, &rtpvrawdepay, &videorate, appsink.upcast_ref()];
-        pipeline.add_many(elements)?;
-        Element::link_many(elements)?;
-        for e in elements {
-            e.sync_state_with_parent()?
-        }
-        let video_tex = Tex::find(&tex_id)?;
-        Video1::set_video_callback(appsink, video_tex, self.width as usize, self.height as usize);
+    //     let elements = &[&udpsrc, &rtpvrawdepay, &videorate, appsink.upcast_ref()];
+    //     pipeline.add_many(elements)?;
+    //     Element::link_many(elements)?;
+    //     for e in elements {
+    //         e.sync_state_with_parent()?
+    //     }
+    //     let video_tex = Tex::find(&tex_id)?;
+    //     Video1::set_video_callback(appsink, video_tex, self.width as usize, self.height as usize);
 
-        self.bus = Some(pipeline.bus().expect("Pipeline without bus. Shouldn't happen!"));
-        self.pipeline = Some(pipeline);
-        Ok(())
-    }
+    //     self.bus = Some(pipeline.bus().expect("Pipeline without bus. Shouldn't happen!"));
+    //     self.pipeline = Some(pipeline);
+    //     Ok(())
+    // }
 
     /// init a video
     ///
@@ -377,9 +378,24 @@ impl Video1 {
                     let queue = ElementFactory::make("queue").build()?;
                     let convert = ElementFactory::make("videoconvert").build()?;
                     let scale = ElementFactory::make("videoscale").build()?;
-                    let appsink = AppSink::builder()
-                        .caps(&VideoCapsBuilder::new().format(VideoFormat::Rgba).width(width).height(height).build())
-                        .build();
+                    let appsink_caps = if cfg!(target_os = "android") {
+                        &VideoCapsBuilder::new()
+                            .features([gstreamer_gl::CAPS_FEATURE_MEMORY_GL_MEMORY])
+                            .field("texture-target", "external-oes")
+                            //.framerate((60, 1).into())
+                            .format(VideoFormat::Rgba)
+                            .width(width)
+                            .height(height)
+                            .build()
+                    } else {
+                        &VideoCapsBuilder::new()
+                            //.framerate((60, 1).into())
+                            .format(VideoFormat::Rgba)
+                            .width(width)
+                            .height(height)
+                            .build()
+                    };
+                    let appsink = AppSink::builder().caps(appsink_caps).build();
 
                     let elements = &[&queue, &convert, &scale, appsink.upcast_ref()];
                     pipeline.add_many(elements)?;
@@ -464,14 +480,14 @@ impl Video1 {
             let insert_sink = |is_audio, is_video| -> Result<(), anyhow::Error> {
                 if is_audio {
                     let queue = ElementFactory::make("queue").build()?;
-                    // let decode = ElementFactory::make("faad").build()?;
+                    let decode = ElementFactory::make("avdec_aac").build()?;
                     let convert = ElementFactory::make("audioconvert").build()?;
                     let resample = ElementFactory::make("audioresample").build()?;
                     let appsink = AppSink::builder()
                         .caps(&AudioCapsBuilder::new_interleaved().format(AUDIO_FORMAT_F32).channels(1).build())
                         .build();
 
-                    let elements = &[&queue, &convert, &resample, appsink.upcast_ref()];
+                    let elements = &[&queue, &decode, &convert, &resample, appsink.upcast_ref()];
                     pipeline.add_many(elements)?;
                     Element::link_many(elements)?;
 
@@ -497,8 +513,13 @@ impl Video1 {
 
                     let scale = ElementFactory::make("videoscale").build()?;
                     let appsink_caps = if cfg!(target_os = "android") {
+                        // decode.foreach_pad(|_element, pad| {
+                        //     Log::diag(format!("Pad : {}", pad.path_string()));
+                        //     true
+                        // });
                         &VideoCapsBuilder::new()
                             .features([gstreamer_gl::CAPS_FEATURE_MEMORY_GL_MEMORY])
+                            .field("texture-target", "external-oes")
                             //.framerate((60, 1).into())
                             .format(VideoFormat::Rgba)
                             .width(width)
@@ -514,9 +535,16 @@ impl Video1 {
                     };
                     let appsink = AppSink::builder().caps(appsink_caps).build();
 
-                    let filter = ElementFactory::make("capsfilter").property("caps", appsink_caps).build()?;
+                    // let the_sink = if false {if cfg!(target_os = "android") {
+                    //     let sink = ElementFactory::make("glsinkbin").build()?;
+                    //     sink.set_property("sink", &appsink);
+                    //     sink
+                    // } else {
+                    //     appsink.clone().upcast()
+                    // };
+                    let elements = &[&queue, &parse, &decode, &convert, &scale, appsink.upcast_ref()];
+                    //let filter = ElementFactory::make("capsfilter").property("caps", appsink_caps).build()?;
 
-                    let elements = &[&queue, &parse, &decode, &filter, &convert, &scale, appsink.upcast_ref()];
                     pipeline.add_many(elements)?;
                     Element::link_many(elements)?;
 
@@ -637,6 +665,7 @@ impl Video1 {
                     let appsink_caps = if cfg!(target_os = "android") {
                         &VideoCapsBuilder::new()
                             .features([gstreamer_gl::CAPS_FEATURE_MEMORY_GL_MEMORY])
+                            .field("texture-target", "external-oes")
                             //.framerate((60, 1).into())
                             .format(VideoFormat::Rgba)
                             .width(width)
@@ -792,6 +821,17 @@ impl Video1 {
 
                     Result::<gstreamer::FlowSuccess, gstreamer::FlowError>::Ok(gstreamer::FlowSuccess::Ok)
                 })
+                .new_preroll(|_appsink| {
+                    Log::diag(">>>>>new_preroll");
+                    Result::<gstreamer::FlowSuccess, gstreamer::FlowError>::Ok(gstreamer::FlowSuccess::Ok)
+                })
+                .propose_allocation(|_appsink, allocation| {
+                    Log::diag(format!(">>>>>propose_allocation {:?}", allocation));
+                    true
+                })
+                .eos(|_appsink| {
+                    Log::diag(">>>>>eos");
+                })
                 .build(),
         );
     }
@@ -872,94 +912,97 @@ impl Video1 {
 }
 
 pub fn gstreamer_init() -> Result<(), anyhow::Error> {
-    gstreamer::log::set_default_threshold(gstreamer::DebugLevel::Warning);
     #[cfg(not(target_os = "android"))]
     {
         gstreamer::init()?;
     }
+    #[cfg(target_os = "android")]
+    {
+        gstreamer::log::set_default_threshold(gstreamer::DebugLevel::Debug);
+    }
 
-    // #[cfg(target_os = "android")]
-    // {
-    //     let ctx = ndk_context::android_context();
-    //     let vm = unsafe { jni::JavaVM::from_raw(ctx.vm() as _) }?;
-    //     //let activity = unsafe { jni::objects::JObject::from_raw(ctx.context() as _) };
-    //     let mut env = vm.attach_current_thread()?;
+    #[cfg(target_os = "android")]
+    {
+        let ctx = ndk_context::android_context();
+        let vm = unsafe { jni::JavaVM::from_raw(ctx.vm() as _) }?;
+        //let activity = unsafe { jni::objects::JObject::from_raw(ctx.context() as _) };
+        let mut env = vm.attach_current_thread()?;
 
-    //     let media_codec_list = env.new_object("android/media/MediaCodecList", "(I)V", &[0i32.into()])?;
+        let media_codec_list = env.new_object("android/media/MediaCodecList", "(I)V", &[0i32.into()])?;
 
-    //     // let media_codecs: jni::objects::JObjectArray = env
-    //     //     .call_method(&media_codec_list, "getCodecInfos", "()[Landroid/media/MediaCodecInfo;", &[])?
-    //     //     .l()?
-    //     //     .into();
-    //     // Log::diag(format!("le truc : {:?}", media_codecs));
+        // let media_codecs: jni::objects::JObjectArray = env
+        //     .call_method(&media_codec_list, "getCodecInfos", "()[Landroid/media/MediaCodecInfo;", &[])?
+        //     .l()?
+        //     .into();
+        // Log::diag(format!("le truc : {:?}", media_codecs));
 
-    //     let omx_decode_list = vec!["video/avc", "video/hevc", "video/x-vnd.on2.vp8", "video/x-vnd.on2.vp9"];
+        let omx_decode_list = vec!["video/avc", "video/hevc", "video/x-vnd.on2.vp8", "video/x-vnd.on2.vp9"];
 
-    //     for str in omx_decode_list {
-    //         let jstr = env.new_string(str)?;
-    //         let video_format = env.call_static_method(
-    //             "android/media/MediaFormat",
-    //             "createVideoFormat",
-    //             "(Ljava/lang/String;II)Landroid/media/MediaFormat;",
-    //             &[(&jstr).into(), 800i32.into(), 600i32.into()],
-    //         )?;
+        for str in omx_decode_list {
+            let jstr = env.new_string(str)?;
+            let video_format = env.call_static_method(
+                "android/media/MediaFormat",
+                "createVideoFormat",
+                "(Ljava/lang/String;II)Landroid/media/MediaFormat;",
+                &[(&jstr).into(), 800i32.into(), 600i32.into()],
+            )?;
 
-    //         let media_codec: jni::objects::JString = env
-    //             .call_method(
-    //                 &media_codec_list,
-    //                 "findDecoderForFormat",
-    //                 "(Landroid/media/MediaFormat;)Ljava/lang/String;",
-    //                 &[video_format.borrow()],
-    //             )?
-    //             .l()?
-    //             .into();
+            let media_codec: jni::objects::JString = env
+                .call_method(
+                    &media_codec_list,
+                    "findDecoderForFormat",
+                    "(Landroid/media/MediaFormat;)Ljava/lang/String;",
+                    &[video_format.borrow()],
+                )?
+                .l()?
+                .into();
 
-    //         // "OMX.qcom.video.decoder.avc",
-    //         // "OMX.qcom.video.decoder.vp8",
-    //         // "OMX.qcom.video.decoder.hevc",
-    //         match env.get_string(&media_codec) {
-    //             Result::Ok(codec) => {
-    //                 let str_codec: String = codec.into();
-    //                 Log::diag(format!("Codec for {} -> {}", str, str_codec));
-    //             }
-    //             Err(err) => {
-    //                 Log::warn(format!("No codec for {} ->  {:?}", str, err));
-    //             }
-    //         };
-    //     }
+            // "OMX.qcom.video.decoder.avc",
+            // "OMX.qcom.video.decoder.vp8",
+            // "OMX.qcom.video.decoder.hevc",
+            match env.get_string(&media_codec) {
+                Result::Ok(codec) => {
+                    let str_codec: String = codec.into();
+                    Log::diag(format!("Codec for {} -> {}", str, str_codec));
+                }
+                Err(err) => {
+                    Log::warn(format!("No codec for {} ->  {:?}", str, err));
+                }
+            };
+        }
 
-    //     let omx_decode_list = vec![
-    //         "openh264",
-    //         "vp8dec",
-    //         "vp9dec",
-    //         "amcviddec-c2qtiavcdecoder",
-    //         "amcviddec-omxqcomvideodecoderh263",
-    //         "amcviddec-omxqcomvideodecoderavc",
-    //         "amcviddec-omxqcomvideodecoderhevc",
-    //         "amcviddec-omxqcomvideodecodermpeg2",
-    //         "amcviddec-omxqcomvideodecodermpeg4",
-    //         "amcviddec-omxqcomvideodecodervp8",
-    //         "amcviddec-omxqcomvideodecodervp9",
-    //     ];
+        let omx_decode_list = vec![
+            "openh264",
+            "vp8dec",
+            "vp9dec",
+            "gldownload",
+            "amcviddec-omxqcomvideodecoderh263",
+            "amcviddec-omxqcomvideodecoderavc",
+            "amcviddec-omxqcomvideodecoderhevc",
+            "amcviddec-omxqcomvideodecodermpeg2",
+            "amcviddec-omxqcomvideodecodermpeg4",
+            "amcviddec-omxqcomvideodecodervp8",
+            "amcviddec-omxqcomvideodecodervp9",
+        ];
 
-    //     let registry = gstreamer::Registry::get();
+        let registry = gstreamer::Registry::get();
 
-    //     for plugin in registry.plugins() {
-    //         Log::diag(format!("plugin : {:?}", plugin.plugin_name()));
+        for plugin in registry.plugins() {
+            Log::diag(format!("plugin : {:?}", plugin.plugin_name()));
 
-    //         // for feat in registry.features_by_plugin(&plugin.plugin_name()) {
-    //         //Log::diag(format!("   feature : {:?}", feat));
-    //         // }
-    //     }
+            // for feat in registry.features_by_plugin(&plugin.plugin_name()) {
+            //Log::diag(format!("   feature : {:?}", feat));
+            // }
+        }
 
-    //     for element in omx_decode_list {
-    //         if let Some(feature) = registry.lookup_feature(element) {
-    //             gstreamer::prelude::PluginFeatureExtManual::set_rank(&feature, gstreamer::Rank::PRIMARY);
-    //             registry.add_feature(&feature)?;
-    //         } else {
-    //             Log::warn(format!("Feature {} does not exist !", element));
-    //         }
-    //     }
-    // }
+        for element in omx_decode_list {
+            if let Some(feature) = registry.lookup_feature(element) {
+                gstreamer::prelude::PluginFeatureExtManual::set_rank(&feature, gstreamer::Rank::PRIMARY);
+                registry.add_feature(&feature)?;
+            } else {
+                Log::warn(format!("Feature {} does not exist !", element));
+            }
+        }
+    }
     Ok(())
 }

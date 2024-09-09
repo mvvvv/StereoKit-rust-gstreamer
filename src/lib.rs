@@ -1,4 +1,5 @@
 pub mod video1;
+pub mod video2;
 
 use std::sync::Mutex;
 use stereokit_rust::{
@@ -20,6 +21,7 @@ use stereokit_rust::{
     },
 };
 use video1::{gstreamer_init, Video1, VideoType};
+use video2::Video2;
 use winit::event_loop::EventLoop;
 
 /// Somewhere to copy the log
@@ -164,6 +166,7 @@ pub fn launch(mut sk: Sk, event_loop: EventLoop<StepperAction>, _is_testing: boo
     let mut video_h264_dec_active = false;
     let mut video_vp8_dec_active = false;
     let mut video_vp8_https_dec_active = false;
+    let mut playbin_h264_active = false;
     let mut video_h264_active = false;
     let mut video_mkv_vp8_active = false;
     SkClosures::run_app(
@@ -223,6 +226,33 @@ pub fn launch(mut sk: Sk, event_loop: EventLoop<StepperAction>, _is_testing: boo
             // }
 
             Ui::next_line();
+            if let Some(new_value) = Ui::toggle("Playbin MP4", playbin_h264_active, None) {
+                if new_value {
+                    let uri_fmt = if let Some(dir_path) = get_external_path(sk.get_sk_info_clone()) {
+                        let file_path = dir_path.join("videos/test.mp4");
+                        if file_path.is_file() {
+                            Log::diag(format!("File h264 : {:?}", file_path));
+                            "file:".to_string() + file_path.to_str().unwrap()
+                        } else {
+                            Log::warn(format!("No file h264 : {:?}", file_path));
+                            "!!!!!!!No File".into()
+                        }
+                    } else {
+                        Log::warn(format!("No external path{}", "!"));
+                        "!!!!!!!No external path".into()
+                    };
+                    // launch video_h264
+                    let mut video_h264 = Video2::new(uri_fmt, v3_enabled);
+                    video_h264.transform_screen =
+                        Matrix::tr(&(Vec3::new(-0.5, 0.8, -1.5)), &Quat::from_angles(90.0, 0.0, 0.0));
+                    sk.push_action(StepperAction::add("PlaybinH264", video_h264));
+                } else {
+                    sk.push_action(StepperAction::Remove("PlaybinH264".into()));
+                }
+                playbin_h264_active = new_value;
+            }
+
+            Ui::next_line();
             if let Some(new_value) = Ui::toggle("Video MP4", video_h264_active, None) {
                 if new_value {
                     let uri_fmt = if let Some(dir_path) = get_external_path(sk.get_sk_info_clone()) {
@@ -268,6 +298,8 @@ pub fn launch(mut sk: Sk, event_loop: EventLoop<StepperAction>, _is_testing: boo
                     let mut video_mkv_vp8 = Video1::new(VideoType::VP8File { uri: uri_fmt });
                     video_mkv_vp8.transform_screen =
                         Matrix::tr(&(Vec3::new(1.5, 0.8, -1.5)), &Quat::from_angles(90.0, 0.0, 0.0));
+                    video_mkv_vp8.width = 854;
+                    video_mkv_vp8.height = 480;
                     sk.push_action(StepperAction::add("Videomkv_vp8", video_mkv_vp8));
                 } else {
                     sk.push_action(StepperAction::Remove("Videomkv_vp8".into()));

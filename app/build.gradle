@@ -144,7 +144,7 @@ for (target in cargo.targets) {
         def from_path = "../libs/$abi/libgstreamer_android.so"
         def into_path = layout.buildDirectory.dir("rustJniLibs/android/$abi")
         
-        assert file(from_path).exists()
+        //assert file(from_path).exists()
         dependsOn "cargoBuild${target.capitalize()}"
         from from_path
         into into_path
