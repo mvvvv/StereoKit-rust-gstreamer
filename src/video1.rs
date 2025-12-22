@@ -1198,17 +1198,23 @@ impl Video1 {
     }
 
     fn init_player(&mut self) -> Result<(String, Pipeline), anyhow::Error> {
-        let mut video_tex = Tex::from_file(
-            "textures/4Kscreen.png", //
-            true,
-            None,
-        )
-        .unwrap_or_default();
-        //let mut video_tex = Tex::gen_color(WHITE, self.width, self.height, TexType::Rendertarget, TexFormat::RGBA32);
-        //let mut video_tex = Tex::render_target(self.width, self.height, None, None, None)?;
+        // let mut video_tex = Tex::from_file(
+        //     "textures/4Kscreen.png", //
+        //     true,
+        //     None,
+        // )
+        // .unwrap_or_default();
+        let mut video_tex = Tex::gen_color(
+            stereokit_rust::util::named_colors::WHITE,
+            self.width,
+            self.height,
+            stereokit_rust::tex::TexType::Rendertarget,
+            stereokit_rust::tex::TexFormat::RGBA32,
+        );
+        //let mut video_tex = Tex::render_target(self.width as usize, self.height as usize, None, None, None)?;
         let tex_id = self.repo.id_texture.clone();
         let material_id = self.id.clone() + "material_video";
-        video_tex.id(&tex_id).sample_mode(TexSample::Point);
+        video_tex.id(&tex_id).sample_mode(TexSample::Linear);
         self.video_material.id(&material_id).diffuse_tex(&video_tex);
 
         let pipeline = Pipeline::default();
