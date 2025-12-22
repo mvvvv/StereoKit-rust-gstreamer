@@ -1,0 +1,53 @@
+ #------A bunch of commands you'll use here
+ #---- installing
+ cargo install --path ../StereoKit-rust
+ cargo compile_sks
+ 
+#---- building for pc
+cargo run 
+cargo run  -- --test`
+cargo build --release 
+cargo build_sk_rs ../sk_builds/SK_gstreamer_linux/
+
+
+
+#---- building for android
+cargo compile_sks --options -f -t e
+GSTREAMER_PATH="../gstreamer-1.26.9/arm64" PKG_CONFIG_ALLOW_CROSS=1  ./gradlew run && cmd /c logcat.cmd
+GSTREAMER_PATH="../gstreamer-1.26.9/arm64" PKG_CONFIG_ALLOW_CROSS=1  ./gradlew run && sh logcat.cmd
+GSTREAMER_PATH="../gstreamer-1.26.9/arm64"  PKG_CONFIG_ALLOW_CROSS=1  ./gradlew buildRelease
+
+
+
+
+#---- Cross building Mingw from linux : 
+wine msiexec /i gstreamer-1.0-mingw-x86_64-1.27.2.msi
+wine msiexec /i gstreamer-1.0-devel-mingw-x86_64-1.27.2.msi
+
+cd ../x64-mingw-libs-GST1
+ln -sf ~/.wine/drive_c/Program\ Files/gstreamer/1.0/mingw_x86_64/lib/libgio-2.0.dll.a .
+ln -sf ~/.wine/drive_c/Program\ Files/gstreamer/1.0/mingw_x86_64/lib/libglib-2.0.dll.a .
+ln -sf ~/.wine/drive_c/Program\ Files/gstreamer/1.0/mingw_x86_64/lib/libgmodule-2.0.dll.a 
+ln -sf ~/.wine/drive_c/Program\ Files/gstreamer/1.0/mingw_x86_64/lib/libgobject-2.0.dll.a 
+ln -sf ~/.wine/drive_c/Program\ Files/gstreamer/1.0/mingw_x86_64/lib/libgstapp-1.0.dll.a .
+ln -sf ~/.wine/drive_c/Program\ Files/gstreamer/1.0/mingw_x86_64/lib/libgstaudio-1.0.dll.a .
+ln -sf ~/.wine/drive_c/Program\ Files/gstreamer/1.0/mingw_x86_64/lib/libgstbase-1.0.dll.a .
+ln -sf ~/.wine/drive_c/Program\ Files/gstreamer/1.0/mingw_x86_64/lib/libgstreamer-1.0.dll.a .
+ln -sf ~/.wine/drive_c/Program\ Files/gstreamer/1.0/mingw_x86_64/lib/libgstvideo-1.0.dll.a .
+ln -sf ~/.wine/drive_c/Program\ Files/gstreamer/1.0/mingw_x86_64/lib/libiconv.dll.a .
+ln -sf ~/.wine/drive_c/Program\ Files/gstreamer/1.0/mingw_x86_64/lib/liborc-0.4.dll.a .
+ln -sf ~/.wine/drive_c/Program\ Files/gstreamer/1.0/mingw_x86_64/lib/libpcre2-8.dll.a .
+ln -sf ~/.wine/drive_c/Program\ Files/gstreamer/1.0/mingw_x86_64/lib/libffi.dll.a .
+ln -sf ~/.wine/drive_c/Program\ Files/gstreamer/1.0/mingw_x86_64/lib/libintl.dll.a .
+
+PKG_CONFIG_ALLOW_CROSS=1 cargo build_sk_rs  --x64-win-gnu ../x64-mingw-libs-GST1/  ../sk_builds/SK_gstreamer_win_gnu/
+
+cd ../sk_builds/SK_gstreamer_win_gnu/ && WINEPATH=~/.wine/drive_c/Program\ Files/gstreamer/1.0/mingw_x86_64/bin/ wine stereokit_rust_gstreamer.exe --test | cat; cd -
+
+
+
+
+#---- Compiling screencast-vr
+cargo build -p screencast-vr
+cargo run -p screencast-vr
+cd screencast-vr && cargo run

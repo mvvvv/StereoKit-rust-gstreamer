@@ -106,7 +106,9 @@ cargo {
     prebuiltToolchains = true
     //apiLevel = 21
     //verbose = true
-
+    features {
+        defaultAnd("gl")
+    }
     // release or debug ?
     if (project.gradle.startParameter.taskNames.contains('buildRelease')||
         project.gradle.startParameter.taskNames.contains('assembleRelease') ||

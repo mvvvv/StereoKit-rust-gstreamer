@@ -15,11 +15,31 @@ fn main() {
     let build_os = match env::consts::OS {
         "linux" => "linux",
         "windows" => "windows",
-        _ => panic!("Unsupported OS. You must use either Linux, MacOS or Windows to build the crate."),
+        _ => panic!("Unsupported OS. You must use either Linux or Windows to build the crate."),
     };
 
     match target_family.as_str() {
-        "windows" => {}
+        "windows" => {
+            if build_os == "linux" {
+                let gst_windows_dll_path = "/home/mv/.wine/drive_c/gstreamer/1.0/mingw_x86_64/bin";
+                println!("cargo:rustc-link-search=native={}", gst_windows_dll_path);
+                let gst_static_lib_path = "/home/mv/dvlt/x64-mingw-libs-GST1";
+                println!("cargo:rustc-link-search=native={}", gst_static_lib_path);
+                cargo_link!("ffi");
+                cargo_link!("iconv");
+                cargo_link!("intl");
+                cargo_link!("orc-0.4");
+                cargo_link!("gstreamer-1.0");
+                cargo_link!("gmodule-2.0");
+                cargo_link!("gobject-2.0");
+                cargo_link!("glib-2.0");
+                cargo_link!("pcre2-8");
+                cargo_link!("gstvideo-1.0");
+                cargo_link!("gstbase-1.0");
+                cargo_link!("gstaudio-1.0");
+                cargo_link!("gstapp-1.0");
+            }
+        }
         "wasm" => {}
         "unix" => {
             if target_os == "macos" {
@@ -70,10 +90,10 @@ fn main() {
                 cargo_link!("gstaudio-1.0");
                 cargo_link!("gstapp-1.0");
 
-                const DEFAULT_CLANG_VERSION: &str = "14.0.7";
+                const DEFAULT_CLANG_VERSION: &str = "21";
                 let clang_version = env::var("NDK_CLANG_VERSION").unwrap_or_else(|_| DEFAULT_CLANG_VERSION.to_owned());
                 let linux_x86_64_lib_dir =
-                    format!("toolchains/llvm/prebuilt/{build_os}-x86_64/lib64/clang/{clang_version}/lib/linux/");
+                    format!("toolchains/llvm/prebuilt/{build_os}-x86_64/lib/clang/{clang_version}/lib/linux/");
                 println!("cargo:rustc-link-search={android_ndk_home}/{linux_x86_64_lib_dir}");
                 cargo_link!(format!("clang_rt.builtins-aarch64-android"));
             }

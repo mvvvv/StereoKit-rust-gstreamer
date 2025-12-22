@@ -18,7 +18,7 @@ pub const USAGE: &str = r#"Usage : program [OPTION]
 #[cfg(not(target_os = "android"))]
 /// The main function when launched on PC. Set --test to use the simulator
 fn main() {
-    use stereokit_rust::sk::Sk;
+    use stereokit_rust::sk::{Sk, StandbyMode};
     use stereokit_rust_gstreamer::launch;
 
     let mut headless = false;
@@ -42,7 +42,6 @@ fn main() {
     let mut settings = SkSettings::default();
     settings
         .app_name("rust_gstreamer")
-        .assets_folder("assets")
         .origin(OriginMode::Stage)
         .log_filter(LogLevel::Diagnostic)
         .no_flatscreen_fallback(true);
@@ -53,8 +52,8 @@ fn main() {
         } else {
             settings.mode(AppMode::Simulator);
         }
-        settings.disable_unfocused_sleep(true);
     }
+    settings.standby_mode(StandbyMode::None);
 
     let (sk, event_loop) = settings.init_with_event_loop().unwrap();
     launch(sk, event_loop, is_testing);
