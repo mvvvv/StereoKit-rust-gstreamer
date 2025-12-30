@@ -90,7 +90,7 @@ pub fn launch(mut sk: Sk, event_loop: EventLoop<StepperAction>, _is_testing: boo
 
     // we will have a window to trigger some actions
     let mut window_demo_pose = Pose::new(Vec3::new(-0.7, 1.5, -0.3), Some(Quat::look_dir(Vec3::new(1.0, 0.0, 1.0))));
-    let demo_win_width = 60.0 * CM;
+    let demo_win_width = 80.0 * CM;
 
     // we create a sky dome to be able to switch from the default sky dome
     let mut gradient_sky = Gradient::new(None);
@@ -120,11 +120,12 @@ pub fn launch(mut sk: Sk, event_loop: EventLoop<StepperAction>, _is_testing: boo
     let mut rtp_stream1 = false;
     let mut coding = Coding::H264;
     let mut rtp_stream_decodebin = false;
-    #[cfg(target_os = "android")]
-    let mut rtp_stream_android = false;
+
+    let mut rtp_stream_native = false;
     let mut rtp_stream_uri_playbin = false;
     let mut rtsp_server_playbin = false;
 
+    let mut video_h265_dec_active = false;
     let mut video_h264_dec_active = false;
     let mut video_mkv_vp8_dec_active = false;
 
@@ -178,7 +179,6 @@ pub fn launch(mut sk: Sk, event_loop: EventLoop<StepperAction>, _is_testing: boo
                 } else {
                     sk.send_event(StepperAction::Remove("RtpStream".into()));
                 }
-                rtp_stream1 = new_value;
             }
             Ui::same_line();
             if let Some(new_value) = Ui::toggle("Rtp Stream Decodebin (low latency)", &mut rtp_stream_decodebin, None) {
@@ -192,23 +192,18 @@ pub fn launch(mut sk: Sk, event_loop: EventLoop<StepperAction>, _is_testing: boo
                 } else {
                     sk.send_event(StepperAction::Remove("RtpStreamDecodebin".into()));
                 }
-                rtp_stream_decodebin = new_value;
             }
-            #[cfg(target_os = "android")]
-            {
-                Ui::same_line();
-                if let Some(new_value) = Ui::toggle("Rtp Stream Android", &mut rtp_stream_android, None) {
-                    if new_value {
-                        // launch Android-optimized rtp stream with XR composition layer
-                        let mut rtp_stream_android_s =
-                            Video1::new(VideoType::RtpStreamAndroid { port: 5000, coding: coding.clone() });
-                        rtp_stream_android_s.screen_pose =
-                            Pose::new(Vec3::new(2.5, 2.0, -1.5), Some(Quat::from_angles(90.0, 0.0, 0.0)));
-                        sk.send_event(StepperAction::add("RtpStreamAndroid", rtp_stream_android_s));
-                    } else {
-                        sk.send_event(StepperAction::Remove("RtpStreamAndroid".into()));
-                    }
-                    rtp_stream_android = new_value;
+            Ui::same_line();
+            if let Some(new_value) = Ui::toggle("Rtp Stream Native (VideoOverlay)", &mut rtp_stream_native, None) {
+                if new_value {
+                    // Launch platform native overlay pipeline
+                    let mut rtp_stream_native =
+                        Video1::new(VideoType::RtpStreamNative { port: 5000, coding: coding.clone() });
+                    rtp_stream_native.screen_pose =
+                        Pose::new(Vec3::new(2.5, 2.0, -1.5), Some(Quat::from_angles(90.0, 0.0, 0.0)));
+                    sk.send_event(StepperAction::add("RtpStreamNative", rtp_stream_native));
+                } else {
+                    sk.send_event(StepperAction::Remove("RtpStreamNative".into()));
                 }
             }
             Ui::next_line();
@@ -227,7 +222,6 @@ pub fn launch(mut sk: Sk, event_loop: EventLoop<StepperAction>, _is_testing: boo
                 } else {
                     sk.send_event(StepperAction::Remove("StreamPlaybin".into()));
                 }
-                rtp_stream_uri_playbin = new_value;
             }
             Ui::same_line();
             if let Some(new_value) = Ui::toggle("RTSP server Playbin", &mut rtsp_server_playbin, None) {
@@ -247,17 +241,43 @@ pub fn launch(mut sk: Sk, event_loop: EventLoop<StepperAction>, _is_testing: boo
                 } else {
                     sk.send_event(StepperAction::Remove("ServerPlaybin".into()));
                 }
-                rtsp_server_playbin = new_value;
             }
             Ui::next_line();
             Ui::hseparator();
-            if let Some(new_value) = Ui::toggle("Video MP4 stereo test", &mut video_h264_dec_active, None) {
+            if let Some(new_value) = Ui::toggle("Video MP4 H265", &mut video_h265_dec_active, None) {
                 if new_value {
                     let uri_fmt = if let Some(dir_path) = get_external_path(&Some(sk.get_sk_info_clone())) {
                         let file_path = dir_path.join("videos").join("amaze4k.mp4");
                         if file_path.is_file() {
+                            Log::diag(format!("File h265 : {:?}", file_path));
+                            let path_str = file_path.to_str().unwrap().replace("\\", "/");
+                            format!("file:///{}", path_str)
+                        } else {
+                            Log::warn(format!("No file h265 : {:?}", file_path));
+                            "!!!!!!!No File".into()
+                        }
+                    } else {
+                        Log::warn(format!("No external path{}", "!"));
+                        "!!!!!!!No external path".into()
+                    };
+                    // launch video_h264
+                    let mut video_h265 = Video1::new(VideoType::UriDecodebin { uri: uri_fmt });
+                    video_h265.screen_pose =
+                        Pose::new(Vec3::new(-0.5, 0.8, -1.5), Some(Quat::from_angles(90.0, 0.0, 0.0)));
+                    sk.send_event(StepperAction::add("VideoH265_dec", video_h265));
+                } else {
+                    sk.send_event(StepperAction::Remove("VideoH265_dec".into()));
+                }
+            }
+            Ui::same_line();
+            if let Some(new_value) = Ui::toggle("Video MP4 H264", &mut video_h264_dec_active, None) {
+                if new_value {
+                    let uri_fmt = if let Some(dir_path) = get_external_path(&Some(sk.get_sk_info_clone())) {
+                        let file_path = dir_path.join("videos").join("test.mp4");
+                        if file_path.is_file() {
                             Log::diag(format!("File h264 : {:?}", file_path));
-                            file_path.to_str().unwrap().into()
+                            let path_str = file_path.to_str().unwrap().replace("\\", "/");
+                            format!("file:///{}", path_str)
                         } else {
                             Log::warn(format!("No file h264 : {:?}", file_path));
                             "!!!!!!!No File".into()
@@ -274,9 +294,8 @@ pub fn launch(mut sk: Sk, event_loop: EventLoop<StepperAction>, _is_testing: boo
                 } else {
                     sk.send_event(StepperAction::Remove("VideoH264_dec".into()));
                 }
-                video_h264_dec_active = new_value;
             }
-            Ui::same_line();
+            Ui::same_line();            
             if let Some(new_value) = Ui::toggle("Video VP8 WEBM", &mut video_mkv_vp8_dec_active, None) {
                 if new_value {
                     let uri_fmt = if let Some(dir_path) = get_external_path(&Some(sk.get_sk_info_clone())) {
@@ -302,10 +321,9 @@ pub fn launch(mut sk: Sk, event_loop: EventLoop<StepperAction>, _is_testing: boo
                 } else {
                     sk.send_event(StepperAction::Remove("VideoVP8_dec".into()));
                 }
-                video_mkv_vp8_dec_active = new_value;
             }
             Ui::next_line();
-            if let Some(new_value) = Ui::toggle("Video MP4(play)", &mut video_h264_play_active, None) {
+            if let Some(new_value) = Ui::toggle("Video MP4 H264 playbin", &mut video_h264_play_active, None) {
                 if new_value {
                     let uri_fmt = if let Some(dir_path) = get_external_path(&Some(sk.get_sk_info_clone())) {
                         let file_path = dir_path.join("videos").join("stereo_test.mp4");
@@ -328,10 +346,9 @@ pub fn launch(mut sk: Sk, event_loop: EventLoop<StepperAction>, _is_testing: boo
                 } else {
                     sk.send_event(StepperAction::Remove("VideoH264_play".into()));
                 }
-                video_h264_play_active = new_value;
             }
             Ui::same_line();
-            if let Some(new_value) = Ui::toggle("Video VP8 MKV (play)", &mut video_vp8_play_active, None) {
+            if let Some(new_value) = Ui::toggle("Video VP8 MKV playbin", &mut video_vp8_play_active, None) {
                 if new_value {
                     let uri_fmt = if let Some(dir_path) = get_external_path(&Some(sk.get_sk_info_clone())) {
                         let file_path = dir_path.join("videos").join("sintel_trailer-480p.mkv");
@@ -356,10 +373,9 @@ pub fn launch(mut sk: Sk, event_loop: EventLoop<StepperAction>, _is_testing: boo
                 } else {
                     sk.send_event(StepperAction::Remove("VideoVP8_play".into()));
                 }
-                video_vp8_play_active = new_value;
             }
             Ui::same_line();
-            if let Some(new_value) = Ui::toggle("Video VP8 WEBM HTTPS(play)", &mut video_vp8_https_play_active, None) {
+            if let Some(new_value) = Ui::toggle("Video VP8 WEBM HTTPS playbin", &mut video_vp8_https_play_active, None) {
                 if new_value {
                     // launch video_vp8
                     let mut video_vp8 = Video1::new(VideoType::UriPlaybin {
@@ -371,7 +387,6 @@ pub fn launch(mut sk: Sk, event_loop: EventLoop<StepperAction>, _is_testing: boo
                 } else {
                     sk.send_event(StepperAction::Remove("videoVP8HTTP_play".into()));
                 }
-                video_vp8_https_play_active = new_value;
             }
             Ui::next_line();
             Ui::hseparator();

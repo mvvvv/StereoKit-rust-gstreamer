@@ -1,5 +1,6 @@
 [workspace]
-members = [".", "screencast-vr"]
+members = [".", "screencast"]
+#members = [".", "screencast-vr", "screencast"]
 
 [package]
 name = "stereokit_rust_gstreamer"
@@ -19,7 +20,8 @@ gl=["dep:gstreamer-gl"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [dependencies]
-stereokit-rust = { path = "../StereoKit-rust", features = ["event-loop","force-local-deps"] }
+#stereokit-rust = { path = "../StereoKit-rust", features = ["event-loop","force-local-deps"] }
+stereokit-rust = { version = "0.4.0-alpha.22", features = ["event-loop"] }
 stereokit-macros = { path = "../StereoKit-rust/stereokit-macros" }
 winit = { version = "0.30", features = [ "android-native-activity" ] }
 anyhow = {version = "1.0"}
@@ -33,7 +35,8 @@ gstreamer-gl =  {version = "0.24", optional = true }
 
 
 [target.'cfg(target_os = "android")'.dependencies]
-stereokit-rust = { path = "../StereoKit-rust", features = ["event-loop","build-dynamic-openxr"] }
+#stereokit-rust = { path = "../StereoKit-rust", features = ["event-loop","build-dynamic-openxr"] }
+stereokit-rust = { version = "0.4.0-alpha.22", features = ["event-loop","build-dynamic-openxr"] }
 log = "0.4"
 android_logger = "0.15"
 ndk-context = "0.1"

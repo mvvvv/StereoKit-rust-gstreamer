@@ -274,11 +274,11 @@ fn encoding_str(coding: Coding, encoder: Encoder, gst_str: &mut String) {
 
 #[derive(Debug)]
 struct Stream<'a> {
-    desktop: Desktop,
+    _desktop: Desktop,
     connexion: String,
     to_ip: String,
-    id: u32,
-    screencast_proxy: Option<ScreenCastProxy<'a>>,
+    _id: u32,
+    _screencast_proxy: Option<ScreenCastProxy<'a>>,
     _conn: Option<Connection>,
     _pw_fd: Option<std::os::fd::OwnedFd>,
 }
@@ -333,11 +333,11 @@ impl<'a> Stream<'a> {
 
         // conn.add_match(, f)
         Ok(Self {
-            desktop: Desktop::X11,
+            _desktop: Desktop::X11,
             connexion: gst_str,
             to_ip,
-            id: 0,
-            screencast_proxy: None,
+            _id: 0,
+            _screencast_proxy: None,
             _conn: None,
             _pw_fd: None,
         })
@@ -550,11 +550,11 @@ impl<'a> Stream<'a> {
 
         // Garder le fd ouvert
         Ok(Self {
-            desktop: Desktop::Wayland,
+            _desktop: Desktop::Wayland,
             connexion: gst_str,
             to_ip,
-            id: node_id,
-            screencast_proxy: Some(screencast_proxy),
+            _id: node_id,
+            _screencast_proxy: Some(screencast_proxy),
             _conn: Some(conn),
             _pw_fd: Some(owned_fd),
         })
