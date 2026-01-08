@@ -47,7 +47,7 @@ cd ../sk_builds/SK_gstreamer_win_gnu/ && WINEPATH=~/.wine/drive_c/Program\ Files
 
 
 
-#---- Compiling screencast-vr
-cargo build -p screencast-vr
-cargo run -p screencast-vr
+#---- Compiling screencast
+cargo build -p screencast
+cargo run -p screencast
 cd screencast-vr && cargo run

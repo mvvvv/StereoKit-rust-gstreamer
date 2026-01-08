@@ -1,58 +1,58 @@
 # Screencast
 
-Application de capture d'écran (screencast) utilisant **ashpd** (portail XDG Desktop Portal) pour Wayland et ximagesrc pour X11.
+Screen capture application (screencast) using **ashpd** (XDG Desktop Portal) for Wayland and ximagesrc for X11.
 
-## Caractéristiques
+## Features
 
-- ✅ Support Wayland via **ashpd** (portail XDG)
-- ✅ Support X11 via ximagesrc
-- ✅ Persistance de session (restore_token)
-- ✅ Encodage H264, H265, VP9
-- ✅ Support NVIDIA GPU et CUDA
-- ✅ Mode RTSP ou UDP
-- ✅ Interface graphique simple avec egui
+- ✅ Wayland support via **ashpd** (XDG portal)
+- ✅ X11 support via ximagesrc
+- ✅ Session persistence (restore_token)
+- ✅ H264, H265, VP9 encoding
+- ✅ NVIDIA GPU and CUDA support
+- ✅ RTSP or UDP mode
+- ✅ Simple GUI with egui
 
-## Avantages par rapport à screencast-vr
+## Advantages over screencast-vr
 
-1. **Simplicité** : Utilise `ashpd` qui gère toute la complexité de D-Bus
-2. **Moins de code** : ~400 lignes vs ~760 lignes
-3. **Type-safe** : ashpd fournit des types Rust idiomatiques
-4. **Maintenance** : ashpd est maintenu activement et suit les évolutions des portails
+1. **Simplicity**: Uses `ashpd` which handles all D-Bus complexity
+2. **Less code**: ~400 lines vs ~760 lines
+3. **Type-safe**: ashpd provides idiomatic Rust types
+4. **Maintenance**: ashpd is actively maintained and follows portal updates
 
-## Compilation
+## Build
 
 ```bash
 cargo build -p screencast
 ```
 
-## Exécution
+## Run
 
 ```bash
-# Avec logs détaillés
+# With detailed logs
 RUST_LOG=debug cargo run -p screencast
 
-# Sans logs
+# Without logs
 cargo run -p screencast
 ```
 
 ## Configuration
 
-Le restore_token est sauvegardé dans :
+The restore_token is saved in:
 
 - Linux: `~/.config/screencast/session_config.txt`
 - macOS: `~/Library/Application Support/screencast/session_config.txt`
 - Windows: `%APPDATA%\screencast\session_config.txt`
 
-## Utilisation
+## Usage
 
-1. Sélectionner l'encodage (H264, H265, VP9)
-2. Choisir GPU/CUDA selon votre matériel
-3. Configurer l'adresse de destination
-4. Cliquer sur "Start ScreenCast"
+1. Select encoding (H264, H265, VP9)
+2. Choose GPU/CUDA according to your hardware
+3. Set the destination address
+4. Click "Start ScreenCast"
 
-## Dépendances
+## Dependencies
 
-- `ashpd` : Interface Rust pour les portails XDG Desktop
-- `eframe/egui` : Interface graphique
-- `gstreamer` : Pipeline de streaming
-- `tokio` : Runtime asynchrone
+- `ashpd`: Rust interface for XDG Desktop Portals
+- `eframe/egui`: GUI
+- `gstreamer`: Streaming pipeline
+- `tokio`: Async runtime

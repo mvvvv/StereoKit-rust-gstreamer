@@ -4,9 +4,13 @@ use ashpd::desktop::{
     PersistMode,
 };
 use eframe::egui::{self};
+use futures::stream::StreamExt;
 use gstreamer::{glib::MainLoop, prelude::*};
 use gstreamer_rtsp_server::prelude::{RTSPMediaFactoryExt, RTSPMountPointsExt, RTSPServerExt, RTSPServerExtManual};
-use std::{fs, os::fd::AsRawFd, path::PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+// Global variable to transmit the restore session state
+static RESTORE_SESSION: AtomicBool = AtomicBool::new(false);
+use std::{fs, os::fd::AsRawFd, path::PathBuf, time::Instant};
 
 pub const DEFAULT_HOST: &str = "host=192.168.1.131 port=5000";
 
@@ -19,7 +23,7 @@ fn main() -> Result<(), eframe::Error> {
     gstreamer::log::set_default_threshold(gstreamer::DebugLevel::Warning);
 
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([400.0, 300.0]),
+        viewport: egui::ViewportBuilder::default().with_inner_size([500.0, 600.0]),
         ..Default::default()
     };
 
@@ -71,10 +75,40 @@ enum Encoder {
     Raw,
 }
 
+#[derive(Debug, Clone)]
+struct StreamInfo {
+    ip: String,
+    port: String,
+    encoder: Option<String>,
+    bitrate: Option<u32>,
+    min_bitrate: Option<u32>,
+    max_bitrate: Option<u32>,
+    last_update: Instant,
+}
+
+impl Default for StreamInfo {
+    fn default() -> Self {
+        Self {
+            ip: String::new(),
+            port: String::new(),
+            encoder: None,
+            bitrate: None,
+            min_bitrate: None,
+            max_bitrate: None,
+            last_update: Instant::now(),
+        }
+    }
+}
+
 struct MyApp {
     desktop: Desktop,
     window_id: String,
-    streams: Vec<tokio::task::JoinHandle<()>>,
+    streams: Vec<(
+        tokio::task::JoinHandle<()>,
+        tokio::sync::broadcast::Sender<()>,
+        tokio::sync::mpsc::UnboundedReceiver<StreamInfo>,
+    )>,
+    stream_infos: Vec<StreamInfo>,
     coding: Coding,
     fps: u32,
     with_gpu: bool,
@@ -85,10 +119,14 @@ struct MyApp {
 
 impl MyApp {
     fn new(desktop: Desktop) -> Self {
+        if desktop == Desktop::Wayland {
+            Stream::load_restore_token();
+        }
         Self {
             desktop,
             window_id: String::new(),
             streams: vec![],
+            stream_infos: vec![],
             coding: Coding::H264,
             fps: 60,
             with_gpu: true,
@@ -106,98 +144,232 @@ impl MyApp {
         let window_id = self.window_id.clone();
         let fps = self.fps;
 
-        let handle = tokio::spawn(async move {
-            match Stream::new(desktop, index, coding, encoder, to_ip, window_id, fps).await {
-                Ok(mut stream) => {
-                    let result = if with_rtsp { stream.main_loop_server().await } else { stream.main_loop().await };
-                    if let Err(e) = result {
-                        eprintln!("Stream error: {:?}", e);
-                    }
+        let (tx, rx) = tokio::sync::broadcast::channel(1);
+        let (info_tx, info_rx) = tokio::sync::mpsc::unbounded_channel();
+
+        // Parse IP and port before moving to_ip
+        let initial_info = if !with_rtsp {
+            // Parse IP and port from to_ip
+            if let Some(host_str) = to_ip.strip_prefix("host=") {
+                let parts: Vec<&str> = host_str.split(" port=").collect();
+                if parts.len() == 2 {
+                    StreamInfo { ip: parts[0].to_string(), port: parts[1].to_string(), ..Default::default() }
+                } else {
+                    StreamInfo::default()
                 }
-                Err(e) => eprintln!("Failed to create stream: {:?}", e),
+            } else {
+                StreamInfo::default()
+            }
+        } else {
+            StreamInfo { ip: "127.0.0.1".to_string(), port: "rtsp".to_string(), ..Default::default() }
+        };
+
+        let handle = tokio::spawn(async move {
+            match Stream::run(desktop, index, coding, encoder, to_ip, window_id, fps, rx, with_rtsp, info_tx).await {
+                Ok(_) => {
+                    // Loop execution finished
+                }
+                Err(e) => eprintln!("Stream error: {:?}", e),
             }
         });
 
-        // On ne peut pas join un tokio::JoinHandle dans un contexte sync, mais on peut le stocker si besoin
-        // Pour l'UI, on peut juste compter le nombre de streams lancés
-        self.streams.push(handle);
+        // You cannot join a tokio::JoinHandle in a sync context, but you can store it if needed
+        // For the UI, just count the number of launched streams
+        self.stream_infos.push(initial_info);
+        self.streams.push((handle, tx, info_rx));
     }
 }
 
 impl eframe::App for MyApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Request continuous repaint for smooth color animation
+        ctx.request_repaint();
+
+        // Receive stream info updates
+        for (i, (_, _, info_rx)) in self.streams.iter_mut().enumerate() {
+            if let Ok(info) = info_rx.try_recv() {
+                if i < self.stream_infos.len() {
+                    // Update only encoder and bitrate fields, keep ip and port
+                    self.stream_infos[i].encoder = info.encoder;
+                    self.stream_infos[i].bitrate = info.bitrate;
+                    self.stream_infos[i].min_bitrate = info.min_bitrate;
+                    self.stream_infos[i].max_bitrate = info.max_bitrate;
+                    self.stream_infos[i].last_update = Instant::now();
+                }
+            }
+        }
+
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("XR ScreenCast (ashpd)");
+            egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
+                ui.heading("XR ScreenCast (ashpd)");
 
-            ui.horizontal(|ui| {
-                let window_id_label = ui.label("Window ID (X11):");
-                ui.text_edit_singleline(&mut self.window_id).labelled_by(window_id_label.id);
-            });
+                ui.horizontal(|ui| {
+                    let window_id_label = ui.label("Window ID (X11):");
+                    ui.text_edit_singleline(&mut self.window_id).labelled_by(window_id_label.id);
+                });
 
-            ui.horizontal(|ui| {
-                let to_ip = ui.label("Cast to:");
-                ui.text_edit_singleline(&mut self.to_ip).labelled_by(to_ip.id);
-            });
+                ui.horizontal(|ui| {
+                    let to_ip = ui.label("Cast to:");
+                    ui.text_edit_singleline(&mut self.to_ip).labelled_by(to_ip.id);
+                });
 
-            ui.separator();
-
-            ui.horizontal(|ui| {
-                ui.radio_value(&mut self.coding, Coding::H264, "H264");
-                ui.radio_value(&mut self.coding, Coding::H265, "H265");
-                ui.radio_value(&mut self.coding, Coding::VP9, "VP9");
-            });
-
-            ui.horizontal(|ui| {
-                ui.checkbox(&mut self.with_gpu, "GPU (NVIDIA)");
-                ui.checkbox(&mut self.with_cuda, "CUDA");
-                ui.checkbox(&mut self.with_rtsp, "RTSP");
-            });
-
-            if self.with_cuda {
-                self.with_gpu = true;
-            }
-            if !self.with_gpu {
-                self.with_cuda = false;
-            }
-
-            ui.add(egui::Slider::new(&mut self.fps, 15..=120).text("FPS"));
-
-            ui.separator();
-
-            if ui.button(format!("🎬 Start ScreenCast ({:?})", self.coding)).clicked() {
-                let encoder = if self.with_cuda {
-                    Encoder::NvidiaCuda
-                } else if self.with_gpu {
-                    Encoder::Nvidia
-                } else {
-                    Encoder::Raw
-                };
-                self.launch_stream(self.coding, encoder);
-            }
-
-            ui.label(format!("Active streams: {}", self.streams.len()));
-
-            if self.desktop == Desktop::Wayland {
                 ui.separator();
-                ui.colored_label(egui::Color32::GREEN, "✓ Wayland detected - using ashpd portal");
-            } else if self.desktop == Desktop::X11 {
-                ui.colored_label(egui::Color32::YELLOW, "⚠ X11 detected - using ximagesrc");
-            }
 
-            ui.separator();
-            ui.image(egui::include_image!("../../res/mipmap-hdpi/app_icon.png"));
+                ui.horizontal(|ui| {
+                    ui.radio_value(&mut self.coding, Coding::H264, "H264");
+                    ui.radio_value(&mut self.coding, Coding::H265, "H265");
+                    ui.radio_value(&mut self.coding, Coding::VP9, "VP9");
+                });
+
+                ui.horizontal(|ui| {
+                    ui.checkbox(&mut self.with_gpu, "GPU (NVIDIA)");
+                    ui.checkbox(&mut self.with_cuda, "CUDA");
+                    ui.checkbox(&mut self.with_rtsp, "RTSP");
+                });
+
+                if self.with_cuda {
+                    self.with_gpu = true;
+                }
+                if !self.with_gpu {
+                    self.with_cuda = false;
+                }
+
+                ui.add(egui::Slider::new(&mut self.fps, 15..=120).text("FPS"));
+
+                ui.separator();
+
+                // --- Stream monitoring panel ---
+                ui.group(|ui| {
+                    ui.heading("Active Streams Monitor");
+                    if self.streams.is_empty() {
+                        ui.label("No active streams.");
+                    } else {
+                        let mut to_remove = None;
+
+                        // Display streams in 2 columns
+                        egui::Grid::new("streams_grid").num_columns(2).spacing([20.0, 10.0]).striped(false).show(
+                            ui,
+                            |ui| {
+                                for (i, (handle, tx, _)) in self.streams.iter().enumerate() {
+                                    let status = if handle.is_finished() { "Finished" } else { "Running" };
+
+                                    // Determine if stream is active (received update in last 2 seconds)
+                                    let elapsed_secs = if i < self.stream_infos.len() {
+                                        self.stream_infos[i].last_update.elapsed().as_secs_f32()
+                                    } else {
+                                        10.0
+                                    };
+
+                                    // Interpolate color from green to red based on elapsed time
+                                    // 0s = green (immediate), 10s+ = red (slow transition)
+                                    let transition = (elapsed_secs / 10.0).clamp(0.0, 1.0);
+                                    let green_intensity = ((1.0 - transition) * 80.0) as u8;
+                                    let red_intensity = (40.0 + transition * 40.0) as u8;
+                                    let bg_color = egui::Color32::from_rgb(red_intensity, green_intensity, 40);
+
+                                    egui::Frame::new().fill(bg_color).inner_margin(12.0).corner_radius(4.0).show(
+                                        ui,
+                                        |ui| {
+                                            ui.vertical(|ui| {
+                                                ui.set_min_width(220.0);
+                                                ui.horizontal(|ui| {
+                                                    ui.strong(format!("Stream #{}", i + 1));
+                                                    ui.label(format!("- {}", status));
+                                                    if ui.button("🛑").clicked() {
+                                                        to_remove = Some(i);
+                                                        let _ = tx.send(());
+                                                    }
+                                                });
+
+                                                // Display stream info
+                                                if i < self.stream_infos.len() {
+                                                    let info = &self.stream_infos[i];
+                                                    ui.label(format!("🌐 {}:{}", info.ip, info.port));
+                                                    if let Some(encoder) = &info.encoder {
+                                                        ui.label(format!("🔧 Encoder: {}", encoder));
+                                                    }
+                                                    if let Some(bitrate) = info.bitrate {
+                                                        ui.label(format!("📊 Bitrate: {} kbps", bitrate / 1000));
+                                                    }
+                                                    if let Some(min) = info.min_bitrate {
+                                                        if let Some(max) = info.max_bitrate {
+                                                            ui.label(format!(
+                                                                "📊 Range: {} - {} kbps",
+                                                                min / 1000,
+                                                                max / 1000
+                                                            ));
+                                                        }
+                                                    }
+                                                }
+                                            });
+                                        },
+                                    );
+
+                                    // After every 2 items, start a new row
+                                    if (i + 1) % 2 == 0 {
+                                        ui.end_row();
+                                    }
+                                }
+                            },
+                        );
+
+                        // Remove the selected stream handle (actual cancellation needs Stream-side support)
+                        if let Some(idx) = to_remove {
+                            self.streams.remove(idx);
+                            if idx < self.stream_infos.len() {
+                                self.stream_infos.remove(idx);
+                            }
+                        }
+                    }
+                });
+                ui.separator();
+                let restore_session = RESTORE_SESSION.load(Ordering::Relaxed);
+                ui.horizontal(|ui| {
+                    if ui.button(format!("🎬 Start ScreenCast ({:?})", self.coding)).clicked() {
+                        let encoder = if self.with_cuda {
+                            Encoder::NvidiaCuda
+                        } else if self.with_gpu {
+                            Encoder::Nvidia
+                        } else {
+                            Encoder::Raw
+                        };
+                        self.launch_stream(self.coding, encoder);
+                    }
+                    if restore_session && ui.button("🔄 Reset & Start ScreenCast").clicked() {
+                        // Reset RESTORE_SESSION (and thus the restore_token)
+                        Stream::save_restore_token("");
+                        let encoder = if self.with_cuda {
+                            Encoder::NvidiaCuda
+                        } else if self.with_gpu {
+                            Encoder::Nvidia
+                        } else {
+                            Encoder::Raw
+                        };
+                        self.launch_stream(self.coding, encoder);
+                    }
+                });
+
+                ui.label(format!("Active streams: {}", self.streams.len()));
+
+                if self.desktop == Desktop::Wayland {
+                    ui.separator();
+                    ui.colored_label(egui::Color32::GREEN, "✓ Wayland detected - using ashpd portal");
+                } else if self.desktop == Desktop::X11 {
+                    ui.colored_label(egui::Color32::YELLOW, "⚠ X11 detected - using ximagesrc");
+                }
+
+                ui.separator();
+                ui.image(egui::include_image!("../../res/mipmap-hdpi/app_icon.png"));
+            });
         });
     }
 }
 
-struct Stream {
-    pipeline_str: String,
-    to_ip: String,
-    _node_id: Option<u32>,
-}
+struct Stream;
 
 impl Stream {
     fn config_path() -> PathBuf {
+        // Get the config path for saving the restore token
         let mut path = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
         path.push("screencast");
         fs::create_dir_all(&path).ok();
@@ -206,27 +378,39 @@ impl Stream {
     }
 
     fn load_restore_token() -> Option<String> {
+        // Load the restore token from the config file
         let path = Self::config_path();
-        fs::read_to_string(path).ok().and_then(|s| {
-            let token = s.trim().to_string();
-            if !token.is_empty() {
-                Some(token)
-            } else {
-                None
+        let result = fs::read_to_string(path).ok().and_then(|s| {
+            for line in s.lines() {
+                if let Some(token) = line.strip_prefix("restore_token = ") {
+                    let token = token.trim().to_string();
+                    if !token.is_empty() {
+                        return Some(token);
+                    }
+                }
             }
-        })
+            None
+        });
+        // Update RESTORE_SESSION according to the presence of the token
+        RESTORE_SESSION.store(result.is_some(), std::sync::atomic::Ordering::Relaxed);
+        result
     }
 
     fn save_restore_token(token: &str) {
+        // Save the restore token to the config file
         let path = Self::config_path();
-        if let Err(e) = fs::write(&path, token) {
+        let line = format!("restore_token = {}", token);
+        if let Err(e) = fs::write(&path, line) {
             eprintln!("Failed to save restore_token to {:?}: {}", path, e);
         } else {
             println!("Saved restore_token to {:?}", path);
         }
+        // Update RESTORE_SESSION according to the presence of the token
+        RESTORE_SESSION.store(!token.trim().is_empty(), std::sync::atomic::Ordering::Relaxed);
     }
 
-    async fn new(
+    #[allow(clippy::too_many_arguments)]
+    async fn run(
         desktop: Desktop,
         _index: String,
         coding: Coding,
@@ -234,63 +418,79 @@ impl Stream {
         to_ip: String,
         window_id: String,
         fps: u32,
-    ) -> Result<Self> {
+        stop_signal: tokio::sync::broadcast::Receiver<()>,
+        with_rtsp: bool,
+        info_tx: tokio::sync::mpsc::UnboundedSender<StreamInfo>,
+    ) -> Result<()> {
         match desktop {
-            Desktop::Wayland => Self::new_wayland(coding, encoder, to_ip).await,
-            Desktop::X11 => Self::new_x11(coding, encoder, to_ip, window_id, fps).await,
+            Desktop::Wayland => Self::run_wayland(coding, encoder, to_ip, stop_signal, with_rtsp, info_tx).await,
+            Desktop::X11 => {
+                Self::run_x11(coding, encoder, to_ip, window_id, fps, stop_signal, with_rtsp, info_tx).await
+            }
             Desktop::Windows => bail!("Windows not yet supported"),
             Desktop::MacOs => bail!("MacOS not yet supported"),
         }
     }
 
-    async fn new_wayland(coding: Coding, encoder: Encoder, to_ip: String) -> Result<Self> {
+    async fn run_wayland(
+        coding: Coding,
+        encoder: Encoder,
+        to_ip: String,
+        stop_signal: tokio::sync::broadcast::Receiver<()>,
+        with_rtsp: bool,
+        info_tx: tokio::sync::mpsc::UnboundedSender<StreamInfo>,
+    ) -> Result<()> {
         println!("🎥 Starting Wayland screencast using ashpd...");
 
         let proxy = Screencast::new().await?;
 
-        // Charger le restore_token s'il existe
-        let restore_token = Self::load_restore_token();
-        if let Some(ref token) = restore_token {
-            println!("📋 Using saved restore_token: {}", token);
+        // Load restore_token if available
+        let token = Self::load_restore_token();
+        if let Some(ref t) = token {
+            println!("📋 Using saved restore_token: {}", t);
         } else {
             println!("📋 No restore_token found, will request new session");
         }
 
-        // Créer une session de screencast
+        // Create screencast session
         let session = proxy.create_session().await.context("Failed to create screencast session")?;
 
         println!("✓ Session created");
 
-        // Sélectionner les sources (moniteur + fenêtres)
+        // Select sources (monitor + windows)
         proxy
             .select_sources(
                 &session,
-                CursorMode::Embedded,                     // Inclure le curseur dans la capture
-                SourceType::Monitor | SourceType::Window, // Capturer moniteurs et fenêtres
-                false,                                    // multiple: false (une seule source)
-                restore_token.as_deref(),
-                PersistMode::ExplicitlyRevoked, // Sauvegarder jusqu'à révocation explicite
+                CursorMode::Embedded,                     // Include cursor in capture
+                SourceType::Monitor | SourceType::Window, // Capture monitors and windows
+                false,                                    // multiple: false (single source)
+                token.as_deref(),
+                PersistMode::ExplicitlyRevoked, // Save until explicitly revoked
             )
             .await
             .context("Failed to select sources")?;
 
         println!("✓ Sources selected");
 
-        // Démarrer la capture
+        // Start capture
         let response = proxy.start(&session, None).await.context("Failed to start screencast")?;
 
         println!("✓ Screencast started");
 
-        // Récupérer les données de la réponse
+        // Get response data
         let streams_data = response.response()?;
 
-        // Sauvegarder le restore_token si disponible
+        // Save restore_token if available, otherwise clear previous value
         if let Some(token) = streams_data.restore_token() {
             println!("💾 Received new restore_token");
             Self::save_restore_token(token);
+        } else {
+            // Clear the restore_token file with an empty value
+            println!("💾 No restore_token received, clearing saved token");
+            Self::save_restore_token("");
         }
 
-        // Récupérer les streams
+        // Get streams
         let streams = streams_data.streams();
         if streams.is_empty() {
             bail!("No streams available");
@@ -308,43 +508,71 @@ impl Stream {
             println!("  - Position: ({}, {})", x, y);
         }
 
-        // Ouvrir le PipeWire remote
+        // Open the PipeWire remote
         let fd = proxy.open_pipe_wire_remote(&session).await.context("Failed to open PipeWire remote")?;
 
         let fd_num = fd.as_raw_fd();
         println!("🔌 PipeWire fd: {}", fd_num);
 
-        // Construire la pipeline GStreamer
-        let mut gst_str = format!(
+        // Build the GStreamer pipeline
+        let mut pipeline_str = format!(
             "pipewiresrc fd={} path={} ! queue ! videoconvert ! video/x-raw,format=I420 ! queue ",
             fd_num, node_id
         );
 
-        append_encoding(&mut gst_str, coding, encoder);
+        append_encoding(&mut pipeline_str, coding, encoder);
 
-        // Garder le fd en vie en le "leakant" (ne pas le fermer)
-        std::mem::forget(fd);
+        let result = if with_rtsp {
+            Self::main_loop_server(pipeline_str, stop_signal).await
+        } else {
+            Self::main_loop(pipeline_str, to_ip, stop_signal, info_tx).await
+        };
 
-        Ok(Self { pipeline_str: gst_str, to_ip, _node_id: Some(node_id) })
+        println!("🚪 Closing session explicitly (Wayland)");
+        let _ = session.close().await;
+
+        // Ensure fd is dropped
+        drop(fd);
+
+        result
     }
 
-    async fn new_x11(coding: Coding, encoder: Encoder, to_ip: String, window_id: String, fps: u32) -> Result<Self> {
+    #[allow(clippy::too_many_arguments)]
+    async fn run_x11(
+        coding: Coding,
+        encoder: Encoder,
+        to_ip: String,
+        window_id: String,
+        fps: u32,
+        stop_signal: tokio::sync::broadcast::Receiver<()>,
+        with_rtsp: bool,
+        info_tx: tokio::sync::mpsc::UnboundedSender<StreamInfo>,
+    ) -> Result<()> {
         println!("🎥 Starting X11 screencast using ximagesrc...");
 
         let xid = if window_id.is_empty() { String::new() } else { format!("endx={} endy={}", window_id, window_id) };
 
-        let mut gst_str = format!(
+        let mut pipeline_str = format!(
             "ximagesrc {} use-damage=false remote=1 blocksize=16384 ! video/x-raw, framerate={}/1 ! queue ",
             xid, fps
         );
 
-        append_encoding(&mut gst_str, coding, encoder);
+        append_encoding(&mut pipeline_str, coding, encoder);
 
-        Ok(Self { pipeline_str: gst_str, to_ip, _node_id: None })
+        if with_rtsp {
+            Self::main_loop_server(pipeline_str, stop_signal).await
+        } else {
+            Self::main_loop(pipeline_str, to_ip, stop_signal, info_tx).await
+        }
     }
 
-    async fn main_loop(&mut self) -> Result<()> {
-        let connection_str = format!("{} ! queue ! udpsink {} ", &self.pipeline_str, &self.to_ip);
+    async fn main_loop(
+        pipeline_str: String,
+        to_ip: String,
+        mut stop_signal: tokio::sync::broadcast::Receiver<()>,
+        info_tx: tokio::sync::mpsc::UnboundedSender<StreamInfo>,
+    ) -> Result<()> {
+        let connection_str = format!("{} ! queue ! udpsink {} ", pipeline_str, to_ip);
         println!("🔗 Pipeline: {}", connection_str);
 
         let pipeline = gstreamer::parse::launch(&connection_str)?;
@@ -354,42 +582,87 @@ impl Stream {
             pipeline.set_state(gstreamer::State::Playing)?;
             println!("▶️  Playing!");
 
-            for msg in bus.iter_timed(gstreamer::ClockTime::NONE) {
-                use gstreamer::MessageView;
+            let mut bus_stream = bus.stream();
 
-                match msg.view() {
-                    MessageView::Eos(..) => {
-                        println!("⏹️  End of stream");
-                        pipeline.set_state(gstreamer::State::Null)?;
+            loop {
+                tokio::select! {
+                    _ = stop_signal.recv() => {
+                        println!("🛑 Stop signal received");
                         break;
                     }
-                    MessageView::Error(err) => {
-                        eprintln!(
-                            "❌ Error from {:?}: {} ({:?})",
-                            err.src().map(|s| s.path_string()),
-                            err.error(),
-                            err.debug()
-                        );
-                        pipeline.set_state(gstreamer::State::Null)?;
-                        bail!(err.error());
-                    }
-                    MessageView::Warning(warning) => {
-                        println!("⚠️  Warning from {:?}: {}", warning.src().map(|s| s.path_string()), warning.error());
-                    }
-                    MessageView::StateChanged(s) => {
-                        if let Some(src) = msg.src() {
-                            if src == pipeline.upcast_ref::<gstreamer::Object>() {
-                                println!("🔄 Pipeline state: {:?} -> {:?}", s.old(), s.current());
+                    msg = bus_stream.next() => {
+                        match msg {
+                            Some(msg) => {
+                                use gstreamer::MessageView;
+
+                                match msg.view() {
+                                    MessageView::Eos(..) => {
+                                        println!("⏹️  End of stream");
+                                        break;
+                                    }
+                                    MessageView::Error(err) => {
+                                        eprintln!(
+                                            "❌ Error from {:?}: {} ({:?})",
+                                            err.src().map(|s| s.path_string()),
+                                            err.error(),
+                                            err.debug()
+                                        );
+                                        pipeline.set_state(gstreamer::State::Null)?;
+                                        bail!(err.error());
+                                    }
+                                    MessageView::Warning(warning) => {
+                                        println!("⚠️  Warning from {:?}: {}", warning.src().map(|s| s.path_string()), warning.error());
+                                    }
+                                    MessageView::StateChanged(s) => {
+                                        if let Some(src) = msg.src() {
+                                            if src == pipeline.upcast_ref::<gstreamer::Object>() {
+                                                println!("🔄 Pipeline state: {:?} -> {:?}", s.old(), s.current());
+                                            }
+                                        }
+                                    }
+                                    MessageView::Latency(_) => {
+                                        let _ = pipeline.recalculate_latency();
+                                    }
+                                    MessageView::Tag(tag) => {
+                                        let tags = tag.tags();
+
+                                        // Extract tag information
+                                        let mut stream_info = StreamInfo::default();
+
+                                        if let Some(encoder) = tags.get::<gstreamer::tags::Encoder>() {
+                                            stream_info.encoder = Some(encoder.get().to_string());
+                                        }
+
+                                        if let Some(bitrate) = tags.get::<gstreamer::tags::Bitrate>() {
+                                            stream_info.bitrate = Some(bitrate.get());
+                                        }
+
+                                        if let Some(min_bitrate) = tags.get::<gstreamer::tags::MinimumBitrate>() {
+                                            stream_info.min_bitrate = Some(min_bitrate.get());
+                                        }
+
+                                        if let Some(max_bitrate) = tags.get::<gstreamer::tags::MaximumBitrate>() {
+                                            stream_info.max_bitrate = Some(max_bitrate.get());
+                                        }
+
+                                        // Send info to UI (ignore if receiver is closed)
+                                        let _ = info_tx.send(stream_info);
+                                    }
+                                    _otherwise => {
+                                        //println!("ℹ️  Other message: {:?}", otherwise);
+                                    }
+                                }
+                            }
+                            None => {
+                                println!("🚫 Bus stream ended unexpectedly");
+                                break;
                             }
                         }
                     }
-                    MessageView::Latency(_) => {
-                        let _ = pipeline.recalculate_latency();
-                    }
-                    _ => (),
                 }
             }
 
+            println!("🛑 Stopping pipeline...");
             pipeline.set_state(gstreamer::State::Null)?;
             Ok(())
         } else {
@@ -397,7 +670,10 @@ impl Stream {
         }
     }
 
-    async fn main_loop_server(&mut self) -> Result<()> {
+    async fn main_loop_server(
+        pipeline_str: String,
+        mut stop_signal: tokio::sync::broadcast::Receiver<()>,
+    ) -> Result<()> {
         println!("🌐 Starting RTSP server...");
 
         let main_loop = MainLoop::new(None, false);
@@ -405,14 +681,24 @@ impl Stream {
         let mounts = server.mount_points().expect("mount_points unavailable");
         let factory = gstreamer_rtsp_server::RTSPMediaFactory::new();
 
-        factory.set_launch(&self.pipeline_str);
+        factory.set_launch(&pipeline_str);
         factory.set_shared(true);
         mounts.add_factory("/test", factory);
 
         let id = server.attach(None)?;
         println!("📡 RTSP server ready at rtsp://127.0.0.1:{}/test", server.bound_port());
 
-        main_loop.run();
+        let loop_clone = main_loop.clone();
+        // Spawn thread for the blocking loop
+        std::thread::spawn(move || {
+            loop_clone.run();
+        });
+
+        // Wait for stop signal
+        let _ = stop_signal.recv().await;
+
+        println!("🛑 Stop signal received for RTSP server");
+        main_loop.quit();
 
         println!("⏹️  Server stopped");
         id.remove();

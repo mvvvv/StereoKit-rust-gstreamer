@@ -648,12 +648,12 @@ impl Video1 {
 
             add_and_link(elements, pipeline.as_ref())?;
         } else {
-            let (nv_dec, av_dec) = match coding {
+            let (open_dec, _av_dec) = match coding {
                 Coding::H264 => ("openh264dec", "avdec_h264"),
-                Coding::H265 => ("nvh265dec", "avdec_h265"),
-                Coding::VP9 => ("nvvp9dec", "avdec_vp9"),
+                Coding::H265 => ("open265dec", "avdec_h265"),
+                Coding::VP9 => ("openvp9dec", "avdec_vp9"),
             };
-            let decode = ElementFactory::make(nv_dec).build().unwrap();
+            let decode = ElementFactory::make(open_dec).build().unwrap();
             let elements = vec![
                 &udpsrc,
                 &queue1,
