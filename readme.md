@@ -39,7 +39,7 @@ If you're using VsCode you'll see two launchers in launch.json to debug the proj
 
 ## Run the project on your Android headset
 
-* [Build GStreamer using cerbero](https://gstreamer.freedesktop.org/download/#sources) or [download GStreamer for android](https://gstreamer.freedesktop.org/download/#android). We only need the arm64 directory (Let's say we unzip it into "../gstreamer-1.24.6/".
+* [Build GStreamer using cerbero](https://gstreamer.freedesktop.org/download/#sources) or [download GStreamer for android](https://gstreamer.freedesktop.org/download/#android). We only need the arm64 directory (Let's say we unzip it into "../gstreamer-1.28.0/".
 
 * On windows launch: `GSTREAMER_PATH="../gstreamer-1.26.10/arm64" PKG_CONFIG_ALLOW_CROSS=1  ./gradlew run && cmd /c logcat.cmd`
 * On others launch: `GSTREAMER_PATH="../gstreamer-1.26.10/arm64" PKG_CONFIG_ALLOW_CROSS=1  ./gradlew run && sh logcat.cmd`

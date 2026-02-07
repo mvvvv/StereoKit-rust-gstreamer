@@ -12,10 +12,11 @@ cargo build_sk_rs ../sk_builds/SK_gstreamer_linux/
 
 
 #---- building for android
-cargo compile_sks --options -f -t e
-GSTREAMER_PATH="../gstreamer-1.26.9/arm64" PKG_CONFIG_ALLOW_CROSS=1  ./gradlew run && cmd /c logcat.cmd
-GSTREAMER_PATH="../gstreamer-1.26.9/arm64" PKG_CONFIG_ALLOW_CROSS=1  ./gradlew run && sh logcat.cmd
-GSTREAMER_PATH="../gstreamer-1.26.9/arm64"  PKG_CONFIG_ALLOW_CROSS=1  ./gradlew buildRelease
+cargo clean && ./gradlew clean
+
+GSTREAMER_PATH="../gstreamer-1.28.0/arm64" PKG_CONFIG_ALLOW_CROSS=1  ./gradlew run && cmd /c logcat.cmd
+GSTREAMER_PATH="../gstreamer-1.28.0/arm64" PKG_CONFIG_ALLOW_CROSS=1  ./gradlew run && sh logcat.cmd
+GSTREAMER_PATH="../gstreamer-1.28.0/arm64"  PKG_CONFIG_ALLOW_CROSS=1  ./gradlew buildRelease
 
 
 
@@ -50,4 +51,4 @@ cd ../sk_builds/SK_gstreamer_win_gnu/ && WINEPATH=~/.wine/drive_c/Program\ Files
 #---- Compiling screencast
 cargo build -p screencast
 cargo run -p screencast
-cd screencast-vr && cargo run
+cd screencast && cargo run

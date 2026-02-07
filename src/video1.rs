@@ -32,7 +32,7 @@ use stereokit_rust::{
     font::Font,
     framework::{IStepper, StepperId},
     material::Material,
-    maths::{Bounds, Matrix, Pose, Quat, Vec2, Vec3},
+    maths::{Bounds, Matrix, Pose, Quat, Rect, Vec2, Vec3},
     mesh::{Inds, Mesh, Vertex},
     prelude::*,
     sk::{MainThreadToken, SkInfo},
@@ -44,9 +44,7 @@ use stereokit_rust::{
     util::{named_colors::RED, Time},
 };
 
-#[cfg(target_os = "android")]
 use openxr_sys::SwapchainUsageFlags;
-#[cfg(target_os = "android")]
 use stereokit_rust::tools::xr_comp_layers::XrCompLayers;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -133,10 +131,8 @@ pub struct Video1 {
     sound_left_inst: Option<SoundInst>,
     sound_right: Sound,
     sound_right_inst: Option<SoundInst>,
-    #[cfg(target_os = "android")]
     xr_comp_layers: Option<XrCompLayers>,
-    #[cfg(target_os = "android")]
-    android_swapchain: Option<openxr_sys::Swapchain>,
+    openxr_swapchain: Option<openxr_sys::Swapchain>,
 }
 
 unsafe impl Send for Video1 {}
@@ -182,10 +178,8 @@ impl Default for Video1 {
             sound_left_inst: None,
             sound_right: Sound::click(),
             sound_right_inst: None,
-            #[cfg(target_os = "android")]
             xr_comp_layers: None,
-            #[cfg(target_os = "android")]
-            android_swapchain: None,
+            openxr_swapchain: None,
         }
     }
 }
@@ -238,7 +232,7 @@ impl Video1 {
     }
 
     /// Called from IStepper::step, after check_event here you can draw your UI and scene
-    pub fn draw(&mut self, token: &MainThreadToken) {
+    fn draw(&mut self, token: &MainThreadToken) {
         if let Some(pipeline) = &self.pipeline {
             if let Some(bus) = &self.bus {
                 Log::diag(format!("{:?}", bus.pop()));
@@ -253,6 +247,8 @@ impl Video1 {
             } else if !self.stream_running.load(Ordering::Relaxed) {
                 self.close_pipeline();
             }
+            // If we are on Android with OpenXR, we submit the quad layer with the swapchain instead of rendering the mesh
+            self.draw_swapchain();
         }
 
         let screen_transform = self.screen_param();
@@ -260,6 +256,25 @@ impl Video1 {
         Renderer::add_mesh(token, &self.screen, &self.video_material, screen_transform, None, None);
 
         Text::add_at(token, &self.text, self.transform, self.text_style, None, None, None, None, None, None);
+    }
+
+    /// Submit a quad layer using the OpenXR swapchain if present
+    fn draw_swapchain(&mut self) {
+        if let Some(swapchain) = &self.openxr_swapchain {
+            // Create a Rect from screen position and size
+            let rect = Rect::new(0.0, 0.0, self.screen_size.x, self.screen_size.y);
+
+            XrCompLayers::submit_quad_layer(
+                self.screen_pose,
+                self.screen_size,
+                *swapchain,
+                rect,
+                0, // layer priority
+                1,
+                None, // eye visibility
+                None, // user data
+            );
+        }
     }
 
     /// Here is managed the screen position, its rotundity, size and distance
@@ -556,6 +571,7 @@ impl Video1 {
     /// init a video rtp stream for decodebin
     ///
     fn init_rtp_stream(&mut self, port: i32, coding: Coding) -> Result<(), anyhow::Error> {
+        Log::diag("init_rtp_stream enter");
         let (tex_id, pipeline) = self.init_player()?;
         Log::diag(format!("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$ rtp_stream tex_id: {}", tex_id));
 
@@ -564,28 +580,33 @@ impl Video1 {
             Coding::H265 => ("H265", "h265"),
             Coding::VP9 => ("VP9", "vp9"),
         };
+        Log::diag(format!("coding: {}/{}", up_code, low_code));
 
         let rtp_caps = gstreamer::Caps::builder("application/x-rtp")
             .field("encoding-name", up_code)
             .field("payload", "96")
             .build();
 
+        Log::diag("Creating udpsrc...");
         let udpsrc = gstreamer::ElementFactory::make("udpsrc")
             .property("port", port)
             .property("caps", &rtp_caps)
             .property("buffer-size", 8388608)
             .build()?;
+        Log::diag("Creating queue1...");
         let queue1 = ElementFactory::make("queue")
             .property("max-size-buffers", 0u32) // Unlimited buffers to avoid dropping RTP packets
             .build()?;
+        Log::diag("Creating rtpjitterbuffer...");
         let rtpjitterbuffer = ElementFactory::make("rtpjitterbuffer")
             .property("latency", 0u32)
             .property("do-lost", true)
             .build()?;
         let rtp_depay = ElementFactory::make(&format!("rtp{}depay", low_code)).build()?;
         let parse = ElementFactory::make(&format!("{}parse", low_code)).build()?;
-        let videoconvert = ElementFactory::make("autovideoconvert").build()?;
+        let videoconvert = ElementFactory::make("videoconvert").build()?;
         //let videoscale = ElementFactory::make("videoscale").build()?;
+        Log::diag("Creating queue2...");
         let queue2 = ElementFactory::make("queue")
             .property_from_str("leaky", "downstream")
             .property("max-size-buffers", 1u32)
@@ -597,25 +618,14 @@ impl Video1 {
 
         #[allow(unused_assignments)]
         let mut appsink_caps = VideoCapsBuilder::new().build();
-        if cfg!(target_os = "android") {
-            #[cfg(feature = "gl")]
-            {
-                appsink_caps = VideoCapsBuilder::new()
-                    .features([gstreamer_gl::CAPS_FEATURE_MEMORY_GL_MEMORY])
-                    .field("texture-target", "2D")
-                    //.framerate((60, 1).into())
-                    .format(video_info.format())
-                    .width(self.width)
-                    .height(self.height)
-                    .build()
-            }
-        } else {
-            appsink_caps = VideoCapsBuilder::new()
-                .format(video_info.format())
-                .width(video_info.width() as i32)
-                .height(video_info.height() as i32)
-                .build() //  video_info.to_caps()?;
-        };
+
+        appsink_caps = VideoCapsBuilder::new()
+            .format(video_info.format())
+            .width(video_info.width() as i32)
+            .height(video_info.height() as i32)
+            .build(); //  video_info.to_caps()?;
+
+        Log::diag("Creating appsink...");
         let appsink = AppSink::builder()
             .name(self.id.clone() + "_sink_video")
             .caps(&appsink_caps)
@@ -625,13 +635,14 @@ impl Video1 {
             .build();
 
         if cfg!(target_os = "android") {
+            Log::diag("Android specific setup...");
             let decoder_name = match coding {
                 Coding::H264 => "amcviddec-omxqcomvideodecoderavc",
                 Coding::H265 => "amcviddec-omxqcomvideodecoderhevc",
                 Coding::VP9 => "amcviddec-omxqcomvideodecodervp9",
             };
+            Log::diag(format!("Creating decoder {}...", decoder_name));
             let decode = ElementFactory::make(decoder_name).build()?;
-            let glcolorconvert = ElementFactory::make("glcolorconvert").build()?;
             let elements = vec![
                 &udpsrc,
                 &queue1,
@@ -640,12 +651,12 @@ impl Video1 {
                 &parse,
                 &decode,
                 &queue2,
-                &glcolorconvert, //
                 &videoconvert,
                 //&videoscale,
                 appsink.upcast_ref(),
             ];
 
+            Log::diag("Linking elements...");
             add_and_link(elements, pipeline.as_ref())?;
         } else {
             let (open_dec, _av_dec) = match coding {
@@ -751,8 +762,8 @@ impl Video1 {
             up_code, self.repo.id_texture
         ));
         // Prepare texture and a potential native handle (Android uses its swapchain)
-        let (tex_id, pipeline) = self.init_player()?;
-
+        let pipeline = Pipeline::default();
+        let tex_id = self.repo.id_texture.clone();
         #[cfg(target_os = "android")]
         let window_handle = {
             // Must create an empty render_target, set_native_surface can't replace loaded image data
@@ -794,28 +805,28 @@ impl Video1 {
             }
             Log::diag(format!("Got ANativeWindow: {:?}", native_window));
 
-            // Associate the native window with the StereoKit texture BEFORE setting it on the material
-            Log::diag("set_native_surface >>");
-            Log::diag(format!("abandonned native_surface={:?}", video_tex.get_native_surface()));
-            unsafe {
-                video_tex.set_native_surface(
-                    android_surface as *mut core::ffi::c_void,
-                    TexType::Image,
-                    XrCompLayers::to_native_format(TexFormat::RGBA32),
-                    self.width,
-                    self.height,
-                    1,
-                    false,
-                );
-            }
-            Log::diag(format!("new native_surface={:?}", video_tex.get_native_surface()));
-            Log::diag("<< set_native_surface");
+            // // Associate the native window with the StereoKit texture BEFORE setting it on the material
+            // Log::diag("set_native_surface >>");
+            // Log::diag(format!("abandonned native_surface={:?}", video_tex.get_native_surface()));
+            // unsafe {
+            //     video_tex.set_native_surface(
+            //         android_surface as *mut core::ffi::c_void,
+            //         TexType::Image,
+            //         XrCompLayers::to_native_format(TexFormat::Rgba32Srgb),
+            //         self.width,
+            //         self.height,
+            //         1,
+            //         false,
+            //     );
+            // }
+            // Log::diag(format!("new native_surface={:?}", video_tex.get_native_surface()));
+            // Log::diag("<< set_native_surface");
 
             let material_id = self.id.clone() + "material_video";
             self.video_material.id(&material_id).diffuse_tex(&video_tex);
 
             self.xr_comp_layers = Some(xr_comp_layers);
-            self.android_swapchain = Some(swapchain_handle);
+            self.openxr_swapchain = Some(swapchain_handle);
 
             native_window as usize
         };
@@ -868,7 +879,7 @@ impl Video1 {
             Ok(())
         } else {
             #[cfg(target_os = "android")]
-            if let (Some(xr_comp_layers), Some(swapchain_handle)) = (&self.xr_comp_layers, self.android_swapchain) {
+            if let (Some(xr_comp_layers), Some(swapchain_handle)) = (&self.xr_comp_layers, self.openxr_swapchain) {
                 xr_comp_layers.destroy_android_swapchain(swapchain_handle);
             }
             bail!("Unable to launch_and_watch for {}", self.id)
@@ -915,7 +926,7 @@ impl Video1 {
         //-----------------------------------
         //--- video
         let queue1 = ElementFactory::make("queue").build()?;
-        let v_convert = ElementFactory::make("autovideoconvert").build()?;
+        let v_convert = ElementFactory::make("videoconvert").build()?;
         let mut elements = vec![&queue1, &v_convert];
 
         let video_info = match &self.video_info {
@@ -925,25 +936,13 @@ impl Video1 {
 
         #[allow(unused_assignments)]
         let mut appsink_caps = VideoCapsBuilder::new().build();
-        if cfg!(target_os = "android") {
-            #[cfg(feature = "gl")]
-            {
-                appsink_caps = VideoCapsBuilder::new()
-                    .features([gstreamer_gl::CAPS_FEATURE_MEMORY_GL_MEMORY])
-                    .field("texture-target", "2D")
-                    .framerate((60, 1).into())
-                    .format(VideoFormat::Rgba)
-                    .width(video_info.width() as i32)
-                    .height(video_info.height() as i32)
-                    .build()
-            }
-        } else {
-            appsink_caps = VideoCapsBuilder::new()
-                .format(video_info.format())
-                .width(video_info.width() as i32)
-                .height(video_info.height() as i32)
-                .build() //  video_info.to_caps()?;
-        };
+
+        appsink_caps = VideoCapsBuilder::new()
+            .format(video_info.format())
+            .width(video_info.width() as i32)
+            .height(video_info.height() as i32)
+            .build(); //  video_info.to_caps()?;
+
         let video_appsink = AppSink::builder()
             .name(self.id.clone() + "_sink_video")
             .drop(true)
@@ -953,17 +952,9 @@ impl Video1 {
             .build();
 
         let video_bin = Bin::with_name("video_sink_bin");
-        if cfg!(target_os = "android") {
-            // let glupload = ElementFactory::make("glupload").build()?;
-            // elements.push(&glupload);
-            let glcolorconvert = ElementFactory::make("glcolorconvert").build()?;
-            elements.push(&glcolorconvert);
-            elements.push(video_appsink.upcast_ref());
-            add_and_link(elements, &video_bin)?;
-        } else {
-            elements.push(video_appsink.upcast_ref());
-            add_and_link(elements, &video_bin)?;
-        }
+
+        elements.push(video_appsink.upcast_ref());
+        add_and_link(elements, &video_bin)?;
 
         if let Some(pad) = queue1.static_pad("sink") {
             let ghost_pad = GhostPad::with_target(&pad)?;
@@ -1091,32 +1082,17 @@ impl Video1 {
                     } else {
                         ElementFactory::make("queue").build()?
                     };
-                    // Avoid autovideoconvert here: on Windows/Wine it may pick d3d11/gl interop
-                    // elements (d3d11upload/glcolorconvert/d3d11download) that fail to link.
                     let convert = ElementFactory::make("videoconvert").build()?;
                     let scale = ElementFactory::make("videoscale").build()?;
 
                     #[allow(unused_assignments)]
                     let mut video_appsink_caps = VideoCapsBuilder::new().build();
-                    if cfg!(target_os = "android") {
-                        #[cfg(feature = "gl")]
-                        {
-                            video_appsink_caps = VideoCapsBuilder::new()
-                                .features([gstreamer_gl::CAPS_FEATURE_MEMORY_GL_MEMORY])
-                                .field("texture-target", "2D")
-                                //.framerate((60, 1).into())
-                                .format(VideoFormat::Rgba)
-                                .width(video_info.width() as i32)
-                                .height(video_info.height() as i32)
-                                .build()
-                        }
-                    } else {
-                        video_appsink_caps = VideoCapsBuilder::new()
-                            .format(video_info.format())
-                            .width(video_info.width() as i32)
-                            .height(video_info.height() as i32)
-                            .build() //  video_info.to_caps()?;
-                    };
+                    video_appsink_caps = VideoCapsBuilder::new()
+                        .format(video_info.format())
+                        .width(video_info.width() as i32)
+                        .height(video_info.height() as i32)
+                        .build(); //  video_info.to_caps()?;
+
                     let appsink = if low_latency {
                         AppSink::builder()
                             .name(id.clone() + "_sink_video")
@@ -1134,21 +1110,10 @@ impl Video1 {
                             .build()
                     };
 
-                    if cfg!(target_os = "android") {
-                        let glcolorconvert = ElementFactory::make("glcolorconvert").build()?;
-                        let elements = vec![
-                            &queue,
-                            &glcolorconvert, //
-                            &convert,
-                            appsink.upcast_ref(),
-                        ];
-                        add_and_link(elements, pipeline.as_ref())?;
-                    } else {
-                        let capsfilter =
-                            ElementFactory::make("capsfilter").property("caps", &video_appsink_caps).build()?;
-                        let elements = vec![&queue, &convert, &scale, &capsfilter, appsink.upcast_ref()];
-                        add_and_link(elements, pipeline.as_ref())?;
-                    }
+                    let capsfilter =
+                        ElementFactory::make("capsfilter").property("caps", &video_appsink_caps).build()?;
+                    let elements = vec![&queue, &convert, &scale, &capsfilter, appsink.upcast_ref()];
+                    add_and_link(elements, pipeline.as_ref())?;
 
                     // Get the queue element's sink pad and link the decodebin's newly created
                     // src pad for the video stream to it.
@@ -1168,8 +1133,6 @@ impl Video1 {
     }
 
     /// Variant of connect_pad that connects decodebin streams to native sinks using VideoOverlay
-    /// Android: uses glimagesink + set_native_surface for direct XR composition
-    /// Non-Android: uses platform-specific sinks (d3d11, Wayland, GL) with VideoOverlay
     /// Note: Texture updates require additional mechanism (GPU sharing or tee+appsink)
     fn connect_pad_native(
         &mut self,
@@ -1254,22 +1217,21 @@ impl Video1 {
                         ElementFactory::make("d3d11videosink")
                             .build()
                             .or_else(|_| ElementFactory::make("d3dvideosink").build())
-                            .or_else(|_| ElementFactory::make("glimagesink").build())
+                            .or_else(|_| ElementFactory::make("vulkanimagesink").build())
                             .or_else(|_| ElementFactory::make("autovideosink").build())?
                     } else if cfg!(target_os = "android") {
-                        ElementFactory::make("glimagesink")
+                        ElementFactory::make("vulkanimagesink")
                             .property("sync", false)
                             .property("force-aspect-ratio", false)
                             .build()
                             .or_else(|_| {
-                                Log::warn("glimagesink not available, trying fakesink");
+                                Log::warn("vulkanimagesink not available, trying fakesink");
                                 ElementFactory::make("fakesink").property("sync", false).build()
                             })?
                     } else {
-                        // Linux: try Wayland, then GL/X11 fallbacks
+                        // Linux: try Wayland, fallbacks
                         ElementFactory::make("waylandsink")
                             .build()
-                            .or_else(|_| ElementFactory::make("glimagesink").build())
                             .or_else(|_| ElementFactory::make("xvimagesink").build())
                             .or_else(|_| ElementFactory::make("ximagesink").build())
                             .or_else(|_| ElementFactory::make("autovideosink").build())?
@@ -1314,7 +1276,7 @@ impl Video1 {
             self.width,
             self.height,
             stereokit_rust::tex::TexType::Rendertarget,
-            stereokit_rust::tex::TexFormat::RGBA32,
+            stereokit_rust::tex::TexFormat::Rgba32Srgb,
         );
         //let mut video_tex = Tex::render_target(self.width as usize, self.height as usize, None, None, None)?;
         let tex_id = self.repo.id_texture.clone();
@@ -1665,13 +1627,14 @@ pub fn gstreamer_init() -> Result<(), anyhow::Error> {
         gstreamer::init()?;
         gstreamer::log::set_default_threshold(gstreamer::DebugLevel::Warning);
     }
-    #[cfg(target_os = "android")]
-    {
-        gstreamer::log::set_default_threshold(gstreamer::DebugLevel::Warning);
-    }
 
     #[cfg(target_os = "android")]
     {
+        // On Android, Java already called GStreamer.init() which initializes the native library.
+        // We just need to mark the Rust bindings as initialized without calling init() again.
+        gstreamer::INITIALIZED.store(true, std::sync::atomic::Ordering::SeqCst);
+        gstreamer::log::set_default_threshold(gstreamer::DebugLevel::Warning);
+
         let ctx = ndk_context::android_context();
         let vm = unsafe { jni::JavaVM::from_raw(ctx.vm() as _) }?;
         //let activity = unsafe { jni::objects::JObject::from_raw(ctx.context() as _) };
@@ -1714,37 +1677,37 @@ pub fn gstreamer_init() -> Result<(), anyhow::Error> {
             };
         }
 
-        let omx_decode_list = vec![
-            "openh264",
-            "vp8dec",
-            "vp9dec",
-            "gldownload",
-            "autovideoconvert",
-            "autoconvert",
-            "amcviddec-omxqcomvideodecoderh263",
-            "amcviddec-omxqcomvideodecoderavc",
-            "amcviddec-omxqcomvideodecoderhevc",
-            "amcviddec-omxqcomvideodecodermpeg2",
-            "amcviddec-omxqcomvideodecodermpeg4",
-            "amcviddec-omxqcomvideodecodervp8",
-            "amcviddec-omxqcomvideodecodervp9",
-        ];
+        // let omx_decode_list = vec![
+        //     "openh264",
+        //     "vp8dec",
+        //     "vp9dec",
+        //     "gldownload",
+        //     "autovideoconvert",
+        //     "autoconvert",
+        //     "amcviddec-omxqcomvideodecoderh263",
+        //     "amcviddec-omxqcomvideodecoderavc",
+        //     "amcviddec-omxqcomvideodecoderhevc",
+        //     "amcviddec-omxqcomvideodecodermpeg2",
+        //     "amcviddec-omxqcomvideodecodermpeg4",
+        //     "amcviddec-omxqcomvideodecodervp8",
+        //     "amcviddec-omxqcomvideodecodervp9",
+        // ];
 
-        let registry = gstreamer::Registry::get();
+        // let registry = gstreamer::Registry::get();
 
-        for plugin in registry.plugins() {
-            Log::diag(format!("plugin : {:?}", plugin.plugin_name()));
-        }
+        // for plugin in registry.plugins() {
+        //     Log::diag(format!("plugin : {:?}", plugin.plugin_name()));
+        // }
 
-        for element in omx_decode_list {
-            if let Some(_feature) = registry.lookup_feature(element) {
-                // gstreamer::prelude::PluginFeatureExtManual::set_rank(&feature, gstreamer::Rank::PRIMARY);
-                // registry.add_feature(&feature)?;
-                Log::diag(format!("Feature {} exist !", element));
-            } else {
-                Log::warn(format!("Feature {} does not exist !", element));
-            }
-        }
+        // for element in omx_decode_list {
+        //     if let Some(_feature) = registry.lookup_feature(element) {
+        //         // gstreamer::prelude::PluginFeatureExtManual::set_rank(&feature, gstreamer::Rank::PRIMARY);
+        //         // registry.add_feature(&feature)?;
+        //         Log::diag(format!("Feature {} exist !", element));
+        //     } else {
+        //         Log::warn(format!("Feature {} does not exist !", element));
+        //     }
+        // }
     }
     Ok(())
 }

@@ -106,9 +106,6 @@ cargo {
     prebuiltToolchains = true
     //apiLevel = 21
     //verbose = true
-    features {
-        defaultAnd("gl")
-    }
     // release or debug ?
     if (project.gradle.startParameter.taskNames.contains('buildRelease')||
         project.gradle.startParameter.taskNames.contains('assembleRelease') ||
@@ -143,7 +140,7 @@ for (target in cargo.targets) {
 
     tasks.register("copy_libgstreamer${target.capitalize()}", Copy) {
         def (abi, archTriple) = abis[target]
-        def from_path = "../libs/$abi/libgstreamer_android.so"
+        def from_path = "../obj/local/$abi/libgstreamer_android.so"
         def into_path = layout.buildDirectory.dir("rustJniLibs/android/$abi")
         
         //assert file(from_path).exists()

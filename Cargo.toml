@@ -16,12 +16,12 @@ readme = "README.md"
 crate-type = ["lib", "cdylib"]
 
 [features]
-gl=["dep:gstreamer-gl"]
+
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [dependencies]
-#stereokit-rust = { path = "../StereoKit-rust", features = ["event-loop","force-local-deps"] }
-stereokit-rust = { version = "0.4.0-alpha.22", features = ["event-loop"] }
+stereokit-rust = { path = "../StereoKit-rust", features = ["event-loop"] }
+# stereokit-rust = { version = "0.4.0-alpha.22", features = ["event-loop"] }
 stereokit-macros = { path = "../StereoKit-rust/stereokit-macros" }
 winit = { version = "0.30", features = [ "android-native-activity" ] }
 anyhow = {version = "1.0"}
@@ -31,18 +31,17 @@ gstreamer-app = {version = "0.24", features = ["v1_24"]}
 gstreamer-audio = {version = "0.24", features = ["v1_16"]}
 gstreamer-video = {version = "0.24"}
 byte-slice-cast = "1.2"
-gstreamer-gl =  {version = "0.24", optional = true } 
+openxr-sys = "0.13"
 
 
 [target.'cfg(target_os = "android")'.dependencies]
-#stereokit-rust = { path = "../StereoKit-rust", features = ["event-loop","build-dynamic-openxr"] }
-stereokit-rust = { version = "0.4.0-alpha.22", features = ["event-loop","build-dynamic-openxr"] }
+stereokit-rust = { path = "../StereoKit-rust", features = ["event-loop","build-dynamic-openxr"] }
+# stereokit-rust = { version = "0.4.0-alpha.22", features = ["event-loop","build-dynamic-openxr"] }
 log = "0.4"
 android_logger = "0.15"
 ndk-context = "0.1"
 ndk = "0.9.0"
 ndk-sys = "0.6.0"
 jni = "0.21"
-openxr-sys = "0.11"
 
  

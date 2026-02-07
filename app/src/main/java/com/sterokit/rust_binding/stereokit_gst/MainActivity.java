@@ -10,6 +10,7 @@ public class MainActivity extends android.app.NativeActivity {
     protected void onCreate( Bundle savedInstanceState ) {
         try {
             GStreamer.init(this);
+            Log.d("StereoKitJ", "GStreamer init done");
         } catch (Exception  e) {
             Log.e("StereoKitJ", "Error at init : " + e);
         }
