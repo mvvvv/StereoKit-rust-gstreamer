@@ -72,6 +72,7 @@ fn main() {
                 env::set_current_dir("../..").expect("Unable to get the right working directory");
 
                 println!("cargo:rustc-link-search=native={}/arm64-v8a", gst_android_build_path);
+                println!("cargo:rustc-link-search=native=obj/local/arm64-v8a");
                 cargo_link!("gstreamer_android");
                 cargo_link!("dylib=c++");
 

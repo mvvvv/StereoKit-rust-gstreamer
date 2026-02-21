@@ -46,7 +46,7 @@ If you're using VsCode you'll see two launchers in launch.json to debug the proj
 
 ## Build the release versions of your project
 
-* Desktop : `cargo build --release`
+* Desktop : `cargo build --release`. On Linux, you may have to set `RUSTFLAGS="-Clinker-plugin-lto"` if you encounter any "undefined reference".
 * Android : `GSTREAMER_PATH="../gstreamer-1.26.10/arm64"  PKG_CONFIG_ALLOW_CROSS=1  ./gradlew buildRelease`
 
 Binaries are produced under ./target/release. Apk's are under./app/build/outputs/apk/release

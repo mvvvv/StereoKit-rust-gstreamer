@@ -6,17 +6,17 @@
 #---- building for pc
 cargo run 
 cargo run  -- --test`
-cargo build --release 
-cargo build_sk_rs ../sk_builds/SK_gstreamer_linux/
+RUSTFLAGS="-Clinker-plugin-lto" cargo build --release 
+RUSTFLAGS="-Clinker-plugin-lto" cargo build_sk_rs ../sk_builds/SK_gstreamer_linux/
 
 
 
 #---- building for android
 cargo clean && ./gradlew clean
 
-GSTREAMER_PATH="../gstreamer-1.28.0/arm64" PKG_CONFIG_ALLOW_CROSS=1  ./gradlew run && cmd /c logcat.cmd
-GSTREAMER_PATH="../gstreamer-1.28.0/arm64" PKG_CONFIG_ALLOW_CROSS=1  ./gradlew run && sh logcat.cmd
-GSTREAMER_PATH="../gstreamer-1.28.0/arm64"  PKG_CONFIG_ALLOW_CROSS=1  ./gradlew buildRelease
+GSTREAMER_PATH="../gstreamer-1.28.0/arm64" ./gradlew run && cmd /c logcat.cmd
+GSTREAMER_PATH="../gstreamer-1.28.0/arm64" ./gradlew run && sh logcat.cmd
+GSTREAMER_PATH="../gstreamer-1.28.0/arm64" ./gradlew buildRelease
 
 
 

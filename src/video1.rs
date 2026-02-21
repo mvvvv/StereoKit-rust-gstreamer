@@ -27,12 +27,14 @@ use gstreamer_audio::{AudioBufferRef, AudioInfo, AudioLayout, AUDIO_FORMAT_F32};
 use gstreamer_video::{VideoCapsBuilder, VideoFormat, VideoFrame, VideoInfo};
 use stereokit_macros::IStepper;
 #[cfg(target_os = "android")]
+use stereokit_rust::maths::Rect;
+#[cfg(target_os = "android")]
 use stereokit_rust::tex::{TexFormat, TexType};
 use stereokit_rust::{
     font::Font,
     framework::{IStepper, StepperId},
     material::Material,
-    maths::{Bounds, Matrix, Pose, Quat, Rect, Vec2, Vec3},
+    maths::{Bounds, Matrix, Pose, Quat, Vec2, Vec3},
     mesh::{Inds, Mesh, Vertex},
     prelude::*,
     sk::{MainThreadToken, SkInfo},
@@ -44,7 +46,9 @@ use stereokit_rust::{
     util::{named_colors::RED, Time},
 };
 
+#[cfg(target_os = "android")]
 use openxr_sys::SwapchainUsageFlags;
+#[cfg(target_os = "android")]
 use stereokit_rust::tools::xr_comp_layers::XrCompLayers;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -131,7 +135,9 @@ pub struct Video1 {
     sound_left_inst: Option<SoundInst>,
     sound_right: Sound,
     sound_right_inst: Option<SoundInst>,
+    #[cfg(target_os = "android")]
     xr_comp_layers: Option<XrCompLayers>,
+    #[cfg(target_os = "android")]
     openxr_swapchain: Option<openxr_sys::Swapchain>,
 }
 
@@ -178,7 +184,9 @@ impl Default for Video1 {
             sound_left_inst: None,
             sound_right: Sound::click(),
             sound_right_inst: None,
+            #[cfg(target_os = "android")]
             xr_comp_layers: None,
+            #[cfg(target_os = "android")]
             openxr_swapchain: None,
         }
     }
@@ -260,12 +268,20 @@ impl Video1 {
 
     /// Submit a quad layer using the OpenXR swapchain if present
     fn draw_swapchain(&mut self) {
+        #[cfg(target_os = "android")]
         if let Some(swapchain) = &self.openxr_swapchain {
             // Create a Rect from screen position and size
-            let rect = Rect::new(0.0, 0.0, self.screen_size.x, self.screen_size.y);
+            let rect = Rect::new(0.0, 0.0, self.screen_size.x * 1000.0, self.screen_size.y * 1000.0); // OpenXR expects dimensions in pixels
+
+            let factor_size =
+                (self.screen_distance.max(1.0).powf(2.0) + self.screen_diagonal.max(1.0).powf(2.0)).sqrt();
 
             XrCompLayers::submit_quad_layer(
-                self.screen_pose,
+                self.window_pose(
+                    self.screen.get_bounds(),
+                    factor_size,
+                    self.screen_pose.to_matrix(None) * Matrix::Z_180,
+                ),
                 self.screen_size,
                 *swapchain,
                 rect,
@@ -274,6 +290,11 @@ impl Video1 {
                 None, // eye visibility
                 None, // user data
             );
+        }
+
+        #[cfg(not(target_os = "android"))]
+        {
+            // no-op
         }
     }
 
@@ -400,12 +421,7 @@ impl Video1 {
                 adapt = true;
             }
         } else {
-            let info_position = Vec3::new(
-                0.0, //
-                self.screen_size.y / 2.0 + 0.04 * factor_size,
-                bounds.center.z,
-            );
-            let mut window_pose = Pose::new(info_position, None) * screen_transform;
+            let mut window_pose = self.window_pose(bounds, factor_size, screen_transform);
             Ui::window_begin(&self.repo.id_window_param, &mut window_pose, None, Some(UiWin::Body), Some(UiMove::None));
             if Ui::button_img(
                 &self.repo.id_btn_show_hide_param,
@@ -424,6 +440,16 @@ impl Video1 {
             self.adapt_screen();
         }
         screen_transform
+    }
+
+    /// Calculate the window pose based on the screen bounds, size factor and screen transform
+    fn window_pose(&self, bounds: Bounds, factor_size: f32, screen_transform: Matrix) -> Pose {
+        let info_position = Vec3::new(
+            0.0, //
+            self.screen_size.y / 2.0 + 0.04 * factor_size,
+            bounds.center.z,
+        );
+        Pose::new(info_position, None) * screen_transform
     }
 
     /// Calculate sound position. If factor < 0 this is for left else for right
@@ -566,6 +592,15 @@ impl Video1 {
         }
         self.bus = None;
         self.pipeline = None;
+
+        #[cfg(target_os = "android")]
+        {
+            if let (Some(xr_comp_layers), Some(swapchain_handle)) = (&self.xr_comp_layers, self.openxr_swapchain) {
+                xr_comp_layers.destroy_android_swapchain(swapchain_handle);
+                self.openxr_swapchain = None;
+                self.xr_comp_layers = None;
+            }
+        }
     }
 
     /// init a video rtp stream for decodebin
@@ -587,30 +622,24 @@ impl Video1 {
             .field("payload", "96")
             .build();
 
-        Log::diag("Creating udpsrc...");
         let udpsrc = gstreamer::ElementFactory::make("udpsrc")
             .property("port", port)
             .property("caps", &rtp_caps)
             .property("buffer-size", 8388608)
             .build()?;
-        Log::diag("Creating queue1...");
-        let queue1 = ElementFactory::make("queue")
-            .property("max-size-buffers", 0u32) // Unlimited buffers to avoid dropping RTP packets
-            .build()?;
-        Log::diag("Creating rtpjitterbuffer...");
+        let queue1 = ElementFactory::make("queue").property("max-size-buffers", 0u32).build()?;
         let rtpjitterbuffer = ElementFactory::make("rtpjitterbuffer")
             .property("latency", 0u32)
             .property("do-lost", true)
             .build()?;
         let rtp_depay = ElementFactory::make(&format!("rtp{}depay", low_code)).build()?;
         let parse = ElementFactory::make(&format!("{}parse", low_code)).build()?;
-        let videoconvert = ElementFactory::make("videoconvert").build()?;
-        //let videoscale = ElementFactory::make("videoscale").build()?;
-        Log::diag("Creating queue2...");
+
         let queue2 = ElementFactory::make("queue")
             .property_from_str("leaky", "downstream")
             .property("max-size-buffers", 1u32)
             .build()?;
+
         let video_info = match &self.video_info {
             Some(info) => info,
             None => bail!("No video info for {}", self.id),
@@ -625,24 +654,25 @@ impl Video1 {
             .height(video_info.height() as i32)
             .build(); //  video_info.to_caps()?;
 
-        Log::diag("Creating appsink...");
         let appsink = AppSink::builder()
             .name(self.id.clone() + "_sink_video")
-            .caps(&appsink_caps)
-            .sync(false)
-            .max_buffers(1)
             .drop(true)
+            .max_buffers(1)
+            .sync(false)
+            .caps(&appsink_caps)
             .build();
 
         if cfg!(target_os = "android") {
             Log::diag("Android specific setup...");
             let decoder_name = match coding {
-                Coding::H264 => "amcviddec-omxqcomvideodecoderavc",
-                Coding::H265 => "amcviddec-omxqcomvideodecoderhevc",
-                Coding::VP9 => "amcviddec-omxqcomvideodecodervp9",
+                Coding::H264 => "amcviddec-c2qtiavcdecoder", //"amcviddec-omxqcomvideodecoderavc",
+                Coding::H265 => "amcviddec-c2qtihevcdecoder",
+                Coding::VP9 => "amcviddec-c2qtivp9decoder",
             };
-            Log::diag(format!("Creating decoder {}...", decoder_name));
             let decode = ElementFactory::make(decoder_name).build()?;
+            let videoconvert = ElementFactory::make("videoconvert").build()?;
+            //let videoscale = ElementFactory::make("videoscale").build()?;
+
             let elements = vec![
                 &udpsrc,
                 &queue1,
@@ -665,13 +695,17 @@ impl Video1 {
                 Coding::VP9 => ("openvp9dec", "avdec_vp9"),
             };
             let decode = ElementFactory::make(open_dec).build().unwrap();
+            let videoconvert = ElementFactory::make("autovideoconvert").build()?;
+            //let videoscale = ElementFactory::make("videoscale").build()?;
+
             let elements = vec![
                 &udpsrc,
                 &queue1,
-                //&rtpjitterbuffer,
+                &rtpjitterbuffer,
                 &rtp_depay,
                 &parse,
                 &decode,
+                &queue2,
                 &videoconvert,
                 //&videoscale,
                 appsink.upcast_ref(),
@@ -766,7 +800,7 @@ impl Video1 {
         let tex_id = self.repo.id_texture.clone();
         #[cfg(target_os = "android")]
         let window_handle = {
-            // Must create an empty render_target, set_native_surface can't replace loaded image data
+            // Placeholder texture for material preview; video frames are presented through the XR Android surface swapchain.
             let mut video_tex =
                 Tex::render_target(self.width as usize, self.height as usize, None, None, None).unwrap_or_default();
             video_tex.id(&tex_id).sample_mode(TexSample::Point);
@@ -794,10 +828,12 @@ impl Video1 {
             let surface = android_surface as jni::sys::jobject;
             let native_window = {
                 let ctx = ndk_context::android_context();
-                let vm = unsafe { jni::JavaVM::from_raw(ctx.vm() as _) }?;
-                let env = vm.attach_current_thread()?;
-
-                unsafe { ndk_sys::ANativeWindow_fromSurface(env.get_native_interface(), surface) }
+                let vm = unsafe { jni::JavaVM::from_raw(ctx.vm() as _) };
+                vm.attach_current_thread(|env| {
+                    Ok::<_, jni::errors::Error>(unsafe {
+                        ndk_sys::ANativeWindow_fromSurface(env.get_raw() as *mut _, surface as *mut _)
+                    })
+                })?
             };
 
             if native_window.is_null() {
@@ -805,12 +841,15 @@ impl Video1 {
             }
             Log::diag(format!("Got ANativeWindow: {:?}", native_window));
 
+            // // Impossible d'obtenir vk_image directement avec XR_KHR_android_surface_swapchain
+            // let vk_image = ?
+
             // // Associate the native window with the StereoKit texture BEFORE setting it on the material
             // Log::diag("set_native_surface >>");
             // Log::diag(format!("abandonned native_surface={:?}", video_tex.get_native_surface()));
             // unsafe {
             //     video_tex.set_native_surface(
-            //         android_surface as *mut core::ffi::c_void,
+            //         vk_image as *mut core::ffi::c_void,
             //         TexType::Image,
             //         XrCompLayers::to_native_format(TexFormat::Rgba32Srgb),
             //         self.width,
@@ -819,6 +858,7 @@ impl Video1 {
             //         false,
             //     );
             // }
+
             // Log::diag(format!("new native_surface={:?}", video_tex.get_native_surface()));
             // Log::diag("<< set_native_surface");
 
@@ -879,8 +919,12 @@ impl Video1 {
             Ok(())
         } else {
             #[cfg(target_os = "android")]
-            if let (Some(xr_comp_layers), Some(swapchain_handle)) = (&self.xr_comp_layers, self.openxr_swapchain) {
-                xr_comp_layers.destroy_android_swapchain(swapchain_handle);
+            {
+                if let (Some(xr_comp_layers), Some(swapchain_handle)) = (&self.xr_comp_layers, self.openxr_swapchain) {
+                    xr_comp_layers.destroy_android_swapchain(swapchain_handle);
+                    self.openxr_swapchain = None;
+                    self.xr_comp_layers = None;
+                }
             }
             bail!("Unable to launch_and_watch for {}", self.id)
         }
@@ -1213,19 +1257,13 @@ impl Video1 {
                         .unwrap_or(ElementFactory::make("identity").build()?);
 
                     // Pick a sink per-platform using VideoOverlay for direct rendering
-                    let sink = if cfg!(target_os = "windows") {
-                        ElementFactory::make("d3d11videosink")
-                            .build()
-                            .or_else(|_| ElementFactory::make("d3dvideosink").build())
-                            .or_else(|_| ElementFactory::make("vulkanimagesink").build())
-                            .or_else(|_| ElementFactory::make("autovideosink").build())?
-                    } else if cfg!(target_os = "android") {
-                        ElementFactory::make("vulkanimagesink")
+                    let sink = if cfg!(not(target_os = "linux")) {
+                        ElementFactory::make("vulkansink")
                             .property("sync", false)
                             .property("force-aspect-ratio", false)
                             .build()
                             .or_else(|_| {
-                                Log::warn("vulkanimagesink not available, trying fakesink");
+                                Log::warn("vulkansink not available, using fakesink");
                                 ElementFactory::make("fakesink").property("sync", false).build()
                             })?
                     } else {
@@ -1239,8 +1277,19 @@ impl Video1 {
 
                     Log::diag(format!("Using native sink element: {}", sink.name()));
 
-                    let elements = vec![&queue, &convert, &sink];
-                    add_and_link(elements, pipeline.as_ref())?;
+                    let uses_vulkan_sink = sink.name().starts_with("vulkansink");
+                    if uses_vulkan_sink {
+                        let upload = ElementFactory::make("vulkanupload")
+                            .build()
+                            .or_else(|_| ElementFactory::make("identity").build())?;
+
+                        pipeline.add_many([&queue, &convert, &upload, &sink])?;
+                        Element::link_many([&queue, &convert, &upload, &sink])?;
+                        upload.sync_state_with_parent()?;
+                    } else {
+                        pipeline.add_many([&queue, &convert, &sink])?;
+                        Element::link_many([&queue, &convert, &sink])?;
+                    }
 
                     let sink_pad = queue.static_pad("sink").expect("queue has no sinkpad");
                     src_pad.link(&sink_pad)?;
@@ -1259,6 +1308,12 @@ impl Video1 {
                     } else {
                         Log::warn("No native window handle available for VideoOverlay");
                     }
+
+                    // Sync only after window handle is provided, otherwise some sinks (vulkansink on Android)
+                    // fail state changes with "No ANativeWindow provided".
+                    queue.sync_state_with_parent()?;
+                    convert.sync_state_with_parent()?;
+                    sink.sync_state_with_parent()?;
                 }
                 Ok(())
             };
@@ -1636,46 +1691,52 @@ pub fn gstreamer_init() -> Result<(), anyhow::Error> {
         gstreamer::log::set_default_threshold(gstreamer::DebugLevel::Warning);
 
         let ctx = ndk_context::android_context();
-        let vm = unsafe { jni::JavaVM::from_raw(ctx.vm() as _) }?;
+        let vm = unsafe { jni::JavaVM::from_raw(ctx.vm() as _) };
         //let activity = unsafe { jni::objects::JObject::from_raw(ctx.context() as _) };
-        let mut env = vm.attach_current_thread()?;
 
-        let media_codec_list = env.new_object("android/media/MediaCodecList", "(I)V", &[0i32.into()])?;
+        vm.attach_current_thread(|env| {
+            use jni::signature::{MethodSignature, RuntimeMethodSignature};
 
-        let omx_decode_list = vec!["video/avc", "video/hevc", "video/x-vnd.on2.vp8", "video/x-vnd.on2.vp9"];
+            let ctor_sig_rt = RuntimeMethodSignature::from_str("(I)V")?;
+            let ctor_sig = MethodSignature::from(&ctor_sig_rt);
+            let media_codec_list =
+                env.new_object(jni::jni_str!("android/media/MediaCodecList"), &ctor_sig, &[0i32.into()])?;
 
-        for str in omx_decode_list {
-            let jstr = env.new_string(str)?;
-            let video_format = env.call_static_method(
-                "android/media/MediaFormat",
-                "createVideoFormat",
-                "(Ljava/lang/String;II)Landroid/media/MediaFormat;",
-                &[(&jstr).into(), 800i32.into(), 600i32.into()],
-            )?;
+            let omx_decode_list = vec!["video/avc", "video/hevc", "video/x-vnd.on2.vp8", "video/x-vnd.on2.vp9"];
 
-            let media_codec: jni::objects::JString = env
-                .call_method(
-                    &media_codec_list,
-                    "findDecoderForFormat",
-                    "(Landroid/media/MediaFormat;)Ljava/lang/String;",
-                    &[video_format.borrow()],
-                )?
-                .l()?
-                .into();
+            for str in omx_decode_list {
+                let jstr = env.new_string(str)?;
 
-            // "OMX.qcom.video.decoder.avc",
-            // "OMX.qcom.video.decoder.vp8",
-            // "OMX.qcom.video.decoder.hevc",
-            match env.get_string(&media_codec) {
-                Result::Ok(codec) => {
-                    let str_codec: String = codec.into();
-                    Log::diag(format!("Codec for {} -> {}", str, str_codec));
-                }
-                Err(err) => {
-                    Log::warn(format!("No codec for {} ->  {:?}", str, err));
-                }
-            };
-        }
+                let create_sig_rt =
+                    RuntimeMethodSignature::from_str("(Ljava/lang/String;II)Landroid/media/MediaFormat;")?;
+                let create_sig = MethodSignature::from(&create_sig_rt);
+                let video_format = env.call_static_method(
+                    jni::jni_str!("android/media/MediaFormat"),
+                    jni::jni_str!("createVideoFormat"),
+                    &create_sig,
+                    &[(&jstr).into(), 800i32.into(), 600i32.into()],
+                )?;
+
+                let find_sig_rt = RuntimeMethodSignature::from_str("(Landroid/media/MediaFormat;)Ljava/lang/String;")?;
+                let find_sig = MethodSignature::from(&find_sig_rt);
+                let media_codec_obj = env
+                    .call_method(
+                        &media_codec_list,
+                        jni::jni_str!("findDecoderForFormat"),
+                        &find_sig,
+                        &[video_format.borrow()],
+                    )?
+                    .l()?;
+
+                // "OMX.qcom.video.decoder.avc",
+                // "OMX.qcom.video.decoder.vp8",
+                // "OMX.qcom.video.decoder.hevc",
+                let media_codec = env.cast_local::<jni::objects::JString>(media_codec_obj)?;
+                let str_codec = media_codec.to_string();
+                Log::diag(format!("Codec for {} -> {}", str, str_codec));
+            }
+            Ok::<(), anyhow::Error>(())
+        })?;
 
         // let omx_decode_list = vec![
         //     "openh264",
