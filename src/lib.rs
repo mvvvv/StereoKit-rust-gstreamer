@@ -106,6 +106,10 @@ pub fn launch(mut sk: Sk, event_loop: EventLoop<StepperAction>, _is_testing: boo
     let cube_default = SHCubemap::get_rendered_sky();
     cube_default.render_as_sky();
     let mut sky = 2;
+    let mut show_sky = true;
+    let default_clear_color = Renderer::get_clear_color();
+    let hidden_sky_clear_color = LIGHT_CYAN;
+    Renderer::enable_sky(show_sky);
 
     //init gstreamer
     if let Err(err) = gstreamer_init() {
@@ -145,6 +149,15 @@ pub fn launch(mut sk: Sk, event_loop: EventLoop<StepperAction>, _is_testing: boo
             if Ui::radio_img("Default light", sky == 2, &radio_off, &radio_on, UiBtnLayout::Left, None) {
                 cube_default.render_as_sky();
                 sky = 2;
+            }
+            Ui::same_line();
+            if let Some(new_value) = Ui::toggle("Show Sky", &mut show_sky, None) {
+                Renderer::enable_sky(new_value);
+                if new_value {
+                    Renderer::clear_color(default_clear_color);
+                } else {
+                    Renderer::clear_color(hidden_sky_clear_color);
+                }
             }
             Ui::same_line();
             Ui::hspace(0.25);

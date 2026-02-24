@@ -28,8 +28,6 @@ use gstreamer_video::{VideoCapsBuilder, VideoFormat, VideoFrame, VideoInfo};
 use stereokit_macros::IStepper;
 #[cfg(target_os = "android")]
 use stereokit_rust::maths::Rect;
-#[cfg(target_os = "android")]
-use stereokit_rust::tex::{TexFormat, TexType};
 use stereokit_rust::{
     font::Font,
     framework::{IStepper, StepperId},
@@ -146,7 +144,9 @@ unsafe impl Send for Video1 {}
 /// This code may be called in some threads, so no StereoKit code
 impl Default for Video1 {
     fn default() -> Self {
-        let screen_size = Vec2::new(3.840, 2.160);
+        let width = 3840;
+        let height = 2160;
+        let screen_size = Vec2::new(width as f32 / 1000.0, height as f32 / 1000.0);
         let screen_diagonal = (screen_size.x.powf(2.0) + screen_size.y.powf(2.0)).sqrt();
         let video_material = Material::unlit().copy();
 
@@ -157,8 +157,8 @@ impl Default for Video1 {
 
             repo: VideoRepo::new("Video1".to_string()),
             video_type: VideoType::None,
-            width: 3840,
-            height: 2160,
+            width,
+            height,
             video_info: None,
             audio_info: None,
             screen_distance: 2.20,
@@ -255,47 +255,53 @@ impl Video1 {
             } else if !self.stream_running.load(Ordering::Relaxed) {
                 self.close_pipeline();
             }
-            // If we are on Android with OpenXR, we submit the quad layer with the swapchain instead of rendering the mesh
-            self.draw_swapchain();
+
+            let screen_transform = self.screen_param();
+
+            // If we are on Android with OpenXR, we may submit the quad layer with the swapchain instead of rendering the mesh
+            if !self.draw_swapchain() {
+                // if not submitted with swapchain, render the mesh as usual
+
+                Renderer::add_mesh(token, &self.screen, &self.video_material, screen_transform, None, None);
+            }
         }
-
-        let screen_transform = self.screen_param();
-
-        Renderer::add_mesh(token, &self.screen, &self.video_material, screen_transform, None, None);
-
         Text::add_at(token, &self.text, self.transform, self.text_style, None, None, None, None, None, None);
     }
 
     /// Submit a quad layer using the OpenXR swapchain if present
-    fn draw_swapchain(&mut self) {
+    fn draw_swapchain(&mut self) -> bool {
         #[cfg(target_os = "android")]
         if let Some(swapchain) = &self.openxr_swapchain {
             // Create a Rect from screen position and size
-            let rect = Rect::new(0.0, 0.0, self.screen_size.x * 1000.0, self.screen_size.y * 1000.0); // OpenXR expects dimensions in pixels
+            let rect = Rect::new(0.0, 0.0, self.width as f32, self.height as f32); // OpenXR expects dimensions in pixels
 
-            let factor_size =
-                (self.screen_distance.max(1.0).powf(2.0) + self.screen_diagonal.max(1.0).powf(2.0)).sqrt();
+            let bounds = self.screen.get_bounds();
+
+            // Apply Z_180 rotation to flip the image and offset in local Z
+            let local_offset = self.screen_pose.orientation * Vec3::new(0.0, 0.0, bounds.center.z);
+            let flip_rotation = Quat::from_angles(0.0, 0.0, 180.0);
+            let final_rotation = self.screen_pose.orientation * flip_rotation;
+
+            let swapchain_pose = Pose::new(self.screen_pose.position + local_offset, Some(final_rotation));
 
             XrCompLayers::submit_quad_layer(
-                self.window_pose(
-                    self.screen.get_bounds(),
-                    factor_size,
-                    self.screen_pose.to_matrix(None) * Matrix::Z_180,
-                ),
+                swapchain_pose,
                 self.screen_size,
                 *swapchain,
                 rect,
-                0, // layer priority
-                1,
+                0,
+                1,    // layer priority
                 None, // eye visibility
                 None, // user data
             );
+            return true;
         }
 
         #[cfg(not(target_os = "android"))]
         {
             // no-op
         }
+        false
     }
 
     /// Here is managed the screen position, its rotundity, size and distance
@@ -798,6 +804,7 @@ impl Video1 {
         // Prepare texture and a potential native handle (Android uses its swapchain)
         let pipeline = Pipeline::default();
         let tex_id = self.repo.id_texture.clone();
+
         #[cfg(target_os = "android")]
         let window_handle = {
             // Placeholder texture for material preview; video frames are presented through the XR Android surface swapchain.
@@ -912,6 +919,7 @@ impl Video1 {
         add_and_link(elements, pipeline.as_ref())?;
 
         let pipeline_weak = pipeline.downgrade();
+
         self.connect_pad_native(decode, pipeline_weak, window_handle)?;
 
         if self.bus_report(&pipeline) {
