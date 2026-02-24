@@ -22,7 +22,7 @@ use gstreamer::{
 
 use gstreamer_app::{AppSink, AppSinkCallbacks};
 
-use gstreamer_audio::{AudioBufferRef, AudioInfo, AudioLayout, AUDIO_FORMAT_F32};
+use gstreamer_audio::{AudioFormat, AudioInfo, AudioLayout, AUDIO_FORMAT_F32};
 
 use gstreamer_video::{VideoCapsBuilder, VideoFormat, VideoFrame, VideoInfo};
 use stereokit_macros::IStepper;
@@ -41,7 +41,7 @@ use stereokit_rust::{
     system::{Input, Log, Renderer, Text, TextStyle},
     tex::{Tex, TexSample},
     ui::{Ui, UiBtnLayout, UiMove, UiWin},
-    util::{named_colors::RED, Time},
+    util::named_colors::RED,
 };
 
 #[cfg(target_os = "android")]
@@ -211,8 +211,9 @@ impl Video1 {
         self.adapt_screen();
 
         self.video_info = VideoInfo::builder(VideoFormat::Rgba, self.width as u32, self.height as u32).build().ok();
-        self.audio_info =
-            AudioInfo::builder(AUDIO_FORMAT_F32, 48000, 2).layout(AudioLayout::NonInterleaved).build().ok();
+        let audio_layout =
+            if cfg!(target_os = "android") { AudioLayout::Interleaved } else { AudioLayout::NonInterleaved };
+        self.audio_info = AudioInfo::builder(AUDIO_FORMAT_F32, 48000, 2).layout(audio_layout).build().ok();
 
         if let Err(error) = match &self.video_type {
             VideoType::RtpStream { port, coding } => self.init_rtp_stream(*port, coding.clone()),
@@ -651,14 +652,7 @@ impl Video1 {
             None => bail!("No video info for {}", self.id),
         };
 
-        #[allow(unused_assignments)]
-        let mut appsink_caps = VideoCapsBuilder::new().build();
-
-        appsink_caps = VideoCapsBuilder::new()
-            .format(video_info.format())
-            .width(video_info.width() as i32)
-            .height(video_info.height() as i32)
-            .build(); //  video_info.to_caps()?;
+        let appsink_caps = Self::build_video_appsink_caps(video_info);
 
         let appsink = AppSink::builder()
             .name(self.id.clone() + "_sink_video")
@@ -986,19 +980,12 @@ impl Video1 {
             None => bail!("No video info for {}", self.id),
         };
 
-        #[allow(unused_assignments)]
-        let mut appsink_caps = VideoCapsBuilder::new().build();
-
-        appsink_caps = VideoCapsBuilder::new()
-            .format(video_info.format())
-            .width(video_info.width() as i32)
-            .height(video_info.height() as i32)
-            .build(); //  video_info.to_caps()?;
+        let appsink_caps = Self::build_video_appsink_caps(&video_info);
 
         let video_appsink = AppSink::builder()
             .name(self.id.clone() + "_sink_video")
-            .drop(true)
-            .max_buffers(1)
+            .drop(cfg!(target_os = "android"))
+            .max_buffers(if cfg!(target_os = "android") { 2 } else { 1 })
             .sync(true)
             .caps(&appsink_caps)
             .build();
@@ -1137,13 +1124,7 @@ impl Video1 {
                     let convert = ElementFactory::make("videoconvert").build()?;
                     let scale = ElementFactory::make("videoscale").build()?;
 
-                    #[allow(unused_assignments)]
-                    let mut video_appsink_caps = VideoCapsBuilder::new().build();
-                    video_appsink_caps = VideoCapsBuilder::new()
-                        .format(video_info.format())
-                        .width(video_info.width() as i32)
-                        .height(video_info.height() as i32)
-                        .build(); //  video_info.to_caps()?;
+                    let video_appsink_caps = Self::build_video_appsink_caps(&video_info);
 
                     let appsink = if low_latency {
                         AppSink::builder()
@@ -1153,13 +1134,16 @@ impl Video1 {
                             .sync(false)
                             .caps(&video_appsink_caps)
                             .build()
-                    } else {
+                    } else if cfg!(target_os = "android") {
                         AppSink::builder()
                             .name(id.clone() + "_sink_video")
                             .drop(true)
-                            //.max_buffers(1)
+                            .max_buffers(2)
+                            .sync(true)
                             .caps(&video_appsink_caps)
                             .build()
+                    } else {
+                        AppSink::builder().name(id.clone() + "_sink_video").drop(true).caps(&video_appsink_caps).build()
                     };
 
                     let capsfilter =
@@ -1351,6 +1335,18 @@ impl Video1 {
         Ok((tex_id, pipeline))
     }
 
+    fn build_video_appsink_caps(video_info: &VideoInfo) -> gstreamer::Caps {
+        if cfg!(target_os = "android") {
+            VideoCapsBuilder::new().format(video_info.format()).build()
+        } else {
+            VideoCapsBuilder::new()
+                .format(video_info.format())
+                .width(video_info.width() as i32)
+                .height(video_info.height() as i32)
+                .build()
+        }
+    }
+
     /// Getting data out of the appsink is done by setting callbacks on it.
     /// The appsink will then call those handlers, as soon as data is available.
     fn set_audio_callback(
@@ -1359,6 +1355,11 @@ impl Video1 {
         sound_right: Sound,
         audio_info: AudioInfo,
     ) -> Result<(), anyhow::Error> {
+        let fallback_info = audio_info;
+        let mut negotiated_info: Option<AudioInfo> = None;
+        let mut left_scratch: Vec<f32> = Vec::new();
+        let mut right_scratch: Vec<f32> = Vec::new();
+
         appsink.set_callbacks(
             AppSinkCallbacks::builder()
                 // Add a handler to the "new-sample" signal.
@@ -1373,90 +1374,112 @@ impl Video1 {
                         );
                         gstreamer::FlowError::Error
                     })?;
-                    if false {
-                        match AudioBufferRef::from_buffer_ref_readable(buffer, &audio_info) {
-                            Ok(audio_buffer_ref) => {
-                                if audio_buffer_ref.n_planes() > 1 {
-                                    match audio_buffer_ref.plane_data(0) {
-                                        Ok(samples) => {
-                                            let f32_samples = samples.as_slice_of::<f32>().unwrap();
-                                            sound_left.write_samples(f32_samples, Some((f32_samples.len()) as u64))
-                                        }
-                                        Err(bool_err) => element_error!(
-                                            appsink,
-                                            gstreamer::ResourceError::Failed,
-                                            ("Failed to get left plane_data from audio_buffer: {}", bool_err)
-                                        ),
-                                    }
-                                    match audio_buffer_ref.plane_data(1) {
-                                        Ok(samples) => {
-                                            let f32_samples = samples.as_slice_of::<f32>().unwrap();
-                                            sound_right.write_samples(f32_samples, Some((f32_samples.len()) as u64))
-                                        }
-                                        Err(bool_err) => element_error!(
-                                            appsink,
-                                            gstreamer::ResourceError::Failed,
-                                            ("Failed to get right plane_data from audio_buffer: {}", bool_err)
-                                        ),
-                                    }
+
+                    let info = sample
+                        .caps()
+                        .and_then(|caps| AudioInfo::from_caps(caps).ok())
+                        .or_else(|| negotiated_info.clone())
+                        .unwrap_or_else(|| fallback_info.clone());
+                    negotiated_info = Some(info.clone());
+
+                    let channels = info.channels().max(1) as usize;
+                    let layout = info.layout();
+                    let map = buffer.map_readable().map_err(|_| {
+                        element_error!(
+                            appsink,
+                            gstreamer::ResourceError::Failed,
+                            ("Failed to map audio buffer readable")
+                        );
+                        gstreamer::FlowError::Error
+                    })?;
+
+                    left_scratch.clear();
+                    right_scratch.clear();
+
+                    match info.format() {
+                        AudioFormat::F32le | AudioFormat::F32be => {
+                            let samples = map.as_slice_of::<f32>().map_err(|_| {
+                                element_error!(
+                                    appsink,
+                                    gstreamer::ResourceError::Failed,
+                                    ("Failed to interpret F32 audio buffer")
+                                );
+                                gstreamer::FlowError::Error
+                            })?;
+
+                            if channels >= 2 {
+                                if layout == AudioLayout::NonInterleaved {
+                                    let per_channel = samples.len() / channels;
+                                    let left = &samples[..per_channel];
+                                    let right = &samples[per_channel..(2 * per_channel)];
+                                    left_scratch.extend_from_slice(left);
+                                    right_scratch.extend_from_slice(right);
                                 } else {
-                                    match audio_buffer_ref.plane_data(0) {
-                                        Ok(samples) => {
-                                            let f32_samples = samples.as_slice_of::<f32>().unwrap();
-                                            let (left, right) = f32_samples.split_at(f32_samples.len() / 2);
-                                            sound_left.write_samples(left, Some(left.len() as u64));
-                                            sound_right.write_samples(right, Some(right.len() as u64));
-                                        }
-                                        Err(bool_err) => element_error!(
-                                            appsink,
-                                            gstreamer::ResourceError::Failed,
-                                            ("Failed to get left plane_data from audio_buffer: {}", bool_err)
-                                        ),
+                                    left_scratch.reserve(samples.len() / channels);
+                                    right_scratch.reserve(samples.len() / channels);
+                                    for frame in samples.chunks_exact(channels) {
+                                        left_scratch.push(frame[0]);
+                                        right_scratch.push(frame[1]);
                                     }
                                 }
+                            } else {
+                                left_scratch.extend_from_slice(samples);
+                                right_scratch.extend_from_slice(samples);
                             }
-                            Err(bool_err) => {
-                                if false {
-                                    element_error!(
-                                        appsink,
-                                        gstreamer::ResourceError::Failed,
-                                        ("Failed to get audio_buffer from buffer: {}", bool_err)
-                                    )
+                        }
+                        AudioFormat::S16le | AudioFormat::S16be => {
+                            let samples = map.as_slice_of::<i16>().map_err(|_| {
+                                element_error!(
+                                    appsink,
+                                    gstreamer::ResourceError::Failed,
+                                    ("Failed to interpret S16 audio buffer")
+                                );
+                                gstreamer::FlowError::Error
+                            })?;
+
+                            if channels >= 2 {
+                                if layout == AudioLayout::NonInterleaved {
+                                    let per_channel = samples.len() / channels;
+                                    let left = &samples[..per_channel];
+                                    let right = &samples[per_channel..(2 * per_channel)];
+                                    left_scratch.reserve(per_channel);
+                                    right_scratch.reserve(per_channel);
+                                    for &sample in left {
+                                        left_scratch.push(sample as f32 / 32768.0);
+                                    }
+                                    for &sample in right {
+                                        right_scratch.push(sample as f32 / 32768.0);
+                                    }
+                                } else {
+                                    left_scratch.reserve(samples.len() / channels);
+                                    right_scratch.reserve(samples.len() / channels);
+                                    for frame in samples.chunks_exact(channels) {
+                                        left_scratch.push(frame[0] as f32 / 32768.0);
+                                        right_scratch.push(frame[1] as f32 / 32768.0);
+                                    }
+                                }
+                            } else {
+                                left_scratch.reserve(samples.len());
+                                right_scratch.reserve(samples.len());
+                                for &sample in samples {
+                                    let value = sample as f32 / 32768.0;
+                                    left_scratch.push(value);
+                                    right_scratch.push(value);
                                 }
                             }
                         }
-                    } else {
-                        // // At this point, buffer is only a reference to an existing memory region somewhere.
-                        // // When we want to access its content, we have to map it while requesting the required
-                        // // mode of access (read, read/write).
-                        // // This type of abstraction is necessary, because the buffer in question might not be
-                        // // on the machine's main memory itself, but rather in the GPU's memory.
-                        // // So mapping the buffer makes the underlying memory region accessible to us.
-                        // // See: https://gstreamer.freedesktop.org/documentation/plugin-development/advanced/allocation.html
-                        let map = buffer.map_readable().map_err(|_| {
+                        other => {
                             element_error!(
                                 appsink,
                                 gstreamer::ResourceError::Failed,
-                                ("Failed to map Audio buffer readable")
+                                ("Unsupported audio format in appsink: {}", other)
                             );
-                            gstreamer::FlowError::Error
-                        })?;
-                        // We know what format the data in the memory region has, since we requested
-                        // it by setting the appsink's caps. So what we do here is interpret the
-                        // memory region we mapped as an array of signed 16 bit integers.
-                        let sample = map.as_slice_of::<f32>().map_err(|_| {
-                            element_error!(
-                                appsink,
-                                gstreamer::ResourceError::Failed,
-                                ("Failed to interpret buffer as f32")
-                            );
-                            gstreamer::FlowError::Error
-                        })?;
-                        let sample_size = sample.len() / 2;
-                        let (r, l) = sample.split_at(sample_size);
-                        sound_right.write_samples(r, Some(sample_size as u64));
-                        sound_left.write_samples(l, Some(sample_size as u64));
+                            return Err(gstreamer::FlowError::NotNegotiated);
+                        }
                     }
+
+                    sound_left.write_samples(left_scratch.as_slice(), Some(left_scratch.len() as u64));
+                    sound_right.write_samples(right_scratch.as_slice(), Some(right_scratch.len() as u64));
 
                     Ok(gstreamer::FlowSuccess::Ok)
                 })
@@ -1468,12 +1491,7 @@ impl Video1 {
     /// Getting data out of the appsink is done by setting callbacks on it.
     /// The appsink will then call those handlers, as soon as data is available.
     fn set_video_callback(appsink: &AppSink, mut video_tex: Tex, video_info: VideoInfo) -> Result<(), anyhow::Error> {
-        const NB_FRAMES: u32 = 60;
-        let mut frame_counter = 0u32;
-        let mut previous_frame = 0f64;
-        let mut frames_total = 0f64;
-
-        let mut previous_timer = 0f64;
+        let mut negotiated_info: Option<VideoInfo> = None;
 
         appsink.set_callbacks(
             AppSinkCallbacks::builder()
@@ -1487,53 +1505,38 @@ impl Video1 {
                         );
                         gstreamer::FlowError::Error
                     };
-                    // get the last frame in channel
+
                     let sample = appsink.pull_sample().map_err(frame_err)?;
-                    let buffer = sample.buffer_owned().unwrap();
-                    let info = sample.caps().and_then(|caps| VideoInfo::from_caps(caps).ok()).unwrap();
-                    let index = info.n_planes() - 1;
+                    let info = if let Some(info) = &negotiated_info {
+                        info.clone()
+                    } else {
+                        let parsed = sample
+                            .caps()
+                            .and_then(|caps| VideoInfo::from_caps(caps).ok())
+                            .unwrap_or_else(|| video_info.clone());
+                        negotiated_info = Some(parsed.clone());
+                        parsed
+                    };
 
-                    if let Some(pts) = &buffer.dts_or_pts() {
-                        frames_total += pts.seconds_f64() - previous_frame;
-                        frame_counter += 1;
-                        if frame_counter >= NB_FRAMES {
-                            let timer = Time::get_total_unscaled();
-                            Log::info(format!(
-                                "fps: {} duration:{:?} real_fps: {}",
-                                (NB_FRAMES as f64 / frames_total).round(),
-                                &buffer.duration(),
-                                (NB_FRAMES as f64 / (timer - previous_timer)).round()
-                            ));
-                            frame_counter = 0;
-                            frames_total = 0f64;
-                            previous_timer = timer;
-                        }
-                        previous_frame = pts.seconds_f64();
-                    }
+                    let buffer = sample.buffer_owned().ok_or_else(|| {
+                        element_error!(
+                            appsink,
+                            gstreamer::ResourceError::Failed,
+                            ("Failed to get video buffer from appsink")
+                        );
+                        gstreamer::FlowError::Error
+                    })?;
 
-                    if let Ok(frame) = VideoFrame::from_buffer_readable(buffer, &info) {
-                        let data = frame.plane_data(index).map_err(frame_err)?;
-                        unsafe {
-                            video_tex.set_colors(
-                                video_info.width() as usize,
-                                video_info.height() as usize,
-                                data.as_ptr() as gpointer,
-                            );
-                        }
+                    let frame = VideoFrame::from_buffer_readable(buffer, &info).map_err(|_| {
+                        element_error!(appsink, gstreamer::ResourceError::Failed, ("Failed to map video frame"));
+                        gstreamer::FlowError::Error
+                    })?;
+                    let data = frame.plane_data(0).map_err(frame_err)?;
+                    unsafe {
+                        video_tex.set_colors(info.width() as usize, info.height() as usize, data.as_ptr() as gpointer);
                     }
 
                     Ok(gstreamer::FlowSuccess::Ok)
-                })
-                .new_preroll(|_appsink| {
-                    Log::diag(">>>>>new_preroll");
-                    Ok(gstreamer::FlowSuccess::Ok)
-                })
-                .propose_allocation(|_appsink, allocation| {
-                    Log::diag(format!(">>>>>propose_allocation {:?}", allocation));
-                    true
-                })
-                .eos(|_appsink| {
-                    Log::diag(">>>>>eos");
                 })
                 .build(),
         );
